@@ -63,3 +63,59 @@
 
 - 模板默认预装核心组件库 `shadcn/ui`，位于`src/components/ui/`目录下
 - Next.js 项目**必须默认**采用 shadcn/ui 组件、风格和规范，**除非用户指定用其他的组件和规范。**
+
+## 学生请假系统 - 项目概览
+
+### 功能模块
+
+1. **认证系统** (`src/app/api/auth/`, `src/contexts/auth-context.tsx`)
+   - 自定义 JWT 认证（bcrypt 密码哈希 + jsonwebtoken）
+   - 支持 Cookie 和 Authorization Header 两种方式
+   - 三种角色：student / teacher / admin
+
+2. **学生端** (`src/app/(dashboard)/student/`)
+   - 提交请假申请（事假/病假/其他）
+   - 查看请假记录与审批状态
+   - 撤回未审批的申请
+
+3. **教师端** (`src/app/(dashboard)/teacher/`)
+   - 查看待审批请假
+   - 审批通过/驳回（填写意见）
+   - 查看已处理记录
+
+4. **管理员端** (`src/app/(dashboard)/admin/`)
+   - 学生/教师账号管理（CRUD）
+   - 班级管理
+   - 请假统计报表（按班级/类型/时间）
+   - 全部请假记录
+
+### 数据库表
+
+- `users` - 用户表（学生/教师/管理员）
+- `classes` - 班级表
+- `leave_requests` - 请假申请表
+
+### API 路由
+
+| 路由 | 方法 | 说明 |
+|------|------|------|
+| `/api/auth/login` | POST | 登录 |
+| `/api/auth/register` | POST | 学生注册 |
+| `/api/auth/logout` | POST | 登出 |
+| `/api/auth/me` | GET | 获取当前用户 |
+| `/api/leaves` | GET/POST | 请假列表/创建 |
+| `/api/leaves/[id]` | DELETE | 撤回请假 |
+| `/api/leaves/[id]/approve` | POST | 审批请假 |
+| `/api/users` | GET/POST | 用户列表/创建 |
+| `/api/users/[id]` | PUT/DELETE | 用户更新/删除 |
+| `/api/classes` | GET/POST | 班级列表/创建 |
+| `/api/classes/[id]` | PUT/DELETE | 班级更新/删除 |
+| `/api/stats` | GET | 统计数据 |
+
+### 演示账号
+
+| 角色 | 用户名 | 密码 |
+|------|--------|------|
+| 管理员 | admin | admin123 |
+| 教师 | T2024001 | teacher123 |
+| 学生 | S2024001 | student123 |
