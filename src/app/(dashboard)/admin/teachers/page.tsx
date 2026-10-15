@@ -1,180 +1,235 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from "react";
+import { Card, PageHeader } from "@/components/shared";
+import { Loader2, Plus, Pencil, Trash2, KeyRound } from "lucide-react";
 
-interface UserRecord {
+interface ClassItem {
+  id: string;
+  name: string;
+  leader_id: string | null;
+}
+interface Teacher {
   id: string;
   username: string;
   name: string;
-  role: string;
-  is_active: string;
-  created_at: string;
+  is_active: boolean;
+  must_change_password: boolean;
 }
 
-export default function AdminTeachersPage() {
-  const [users, setUsers] = useState<UserRecord[]>([]);
+export default function AdminTeachers() {
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [classes, setClasses] = useState<ClassItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ username: '', password: '', name: '' });
-  const [error, setError] = useState('');
+  const [editing, setEditing] = useState<Teacher | null>(null);
+  const [form, setForm] = useState({ username: "", name: "", password: "" });
+  const [formError, setFormError] = useState("");
 
-  const fetchData = useCallback(async () => {
+  const load = async () => {
     setLoading(true);
-    const res = await fetch('/api/users?role=teacher');
-    const data = await res.json();
-    setUsers(data.data || []);
+    const [t, c] = await Promise.all([
+      fetch("/api/users?role=teacher", { credentials: "include" }).then((r) => r.json()),
+      fetch("/api/classes", { credentials: "include" }).then((r) => r.json()),
+    ]);
+    setTeachers(t.data ?? []);
+    setClasses(c.data ?? []);
     setLoading(false);
+  };
+  useEffect(() => {
+    load();
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  const teacherClassNames = (id: string) =>
+    classes.filter((c) => c.leader_id === id).map((c) => c.name);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    if (editingId) {
-      const res = await fetch(`/api/users/${editingId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: form.name, password: form.password || undefined }),
+  const save = async () => {
+    setFormError("");
+    if (editing) {
+      const res = await fetch(`/api/users/${editing.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ name: form.name }),
       });
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || '更新失败');
-        return;
-      }
+      const d = await res.json();
+      if (!res.ok) return setFormError(d.error);
     } else {
-      if (!form.password) { setError('请输入密码'); return; }
-      const res = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, role: 'teacher' }),
+      const res = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ...form, role: "teacher" }),
       });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || '创建失败'); return; }
+      const d = await res.json();
+      if (!res.ok) return setFormError(d.error);
     }
-
     setShowForm(false);
-    setEditingId(null);
-    setForm({ username: '', password: '', name: '' });
-    fetchData();
+    load();
   };
 
-  const handleEdit = (u: UserRecord) => {
-    setEditingId(u.id);
-    setForm({ username: u.username, password: '', name: u.name });
-    setShowForm(true);
-    setError('');
+  const remove = async (t: Teacher) => {
+    if (confirm(`确定停用中队长「${t.name}」吗？其名下班级将变为无负责人。`)) {
+      await fetch(`/api/users/${t.id}`, { method: "DELETE", credentials: "include" });
+      load();
+    }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除该教师吗？')) return;
-    await fetch(`/api/users/${id}`, { method: 'DELETE' });
-    fetchData();
+  const resetPwd = async (t: Teacher) => {
+    const pwd = prompt(`为「${t.name}」设置新密码（至少8位含字母数字）`);
+    if (!pwd) return;
+    const res = await fetch(`/api/users/${t.id}/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ password: pwd }),
+    });
+    const d = await res.json();
+    alert(res.ok ? "密码已重置" : d.error || "重置失败");
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">教师管理</h1>
-          <p className="text-slate-500 mt-1">共 {users.length} 名教师</p>
-        </div>
-        <button
-          onClick={() => { setShowForm(true); setEditingId(null); setForm({ username: '', password: '', name: '' }); setError(''); }}
-          className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-        >
-          添加教师
-        </button>
-      </div>
-
-      {showForm && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
-          <h3 className="font-semibold text-slate-900 mb-4">{editingId ? '编辑教师' : '添加教师'}</h3>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && <div className="bg-rose-50 text-rose-600 text-sm px-4 py-2 rounded-lg border border-rose-100">{error}</div>}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">工号</label>
-                <input
-                  type="text"
-                  value={form.username}
-                  onChange={e => setForm(p => ({ ...p, username: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-500 outline-none text-sm"
-                  disabled={!!editingId}
-                  required={!editingId}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">姓名</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-500 outline-none text-sm"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">{editingId ? '新密码（留空不修改）' : '密码'}</label>
-                <input
-                  type="password"
-                  value={form.password}
-                  onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-500 outline-none text-sm"
-                  required={!editingId}
-                />
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button type="submit" className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700">
-                {editingId ? '保存' : '创建'}
-              </button>
-              <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-slate-600 border border-slate-200 text-sm rounded-lg hover:bg-slate-50">
-                取消
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400">加载中...</div>
-      ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div className="space-y-6">
+      <PageHeader
+        title="中队长管理"
+        description="中队长负责本班请假审批与归队销假确认；在班级管理中绑定其管理范围"
+        actions={
+          <button
+            onClick={() => {
+              setEditing(null);
+              setForm({ username: "", name: "", password: "" });
+              setFormError("");
+              setShowForm(true);
+            }}
+            className="inline-flex items-center gap-1.5 bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-indigo-700"
+          >
+            <Plus className="h-4 w-4" />
+            新增中队长
+          </button>
+        }
+      />
+      <Card className="p-5">
+        {loading ? (
+          <div className="flex justify-center py-10">
+            <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+          </div>
+        ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="text-left px-5 py-3 font-medium text-slate-600">工号</th>
-                  <th className="text-left px-5 py-3 font-medium text-slate-600">姓名</th>
-                  <th className="text-left px-5 py-3 font-medium text-slate-600">状态</th>
-                  <th className="text-right px-5 py-3 font-medium text-slate-600">操作</th>
+                <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
+                  <th className="px-3 py-2 font-medium">工号</th>
+                  <th className="px-3 py-2 font-medium">姓名</th>
+                  <th className="px-3 py-2 font-medium">管理班级</th>
+                  <th className="px-3 py-2 font-medium">状态</th>
+                  <th className="px-3 py-2 font-medium text-right">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {users.map(u => (
-                  <tr key={u.id} className="hover:bg-slate-50/50">
-                    <td className="px-5 py-3 text-slate-900 font-mono text-xs">{u.username}</td>
-                    <td className="px-5 py-3 text-slate-900">{u.name}</td>
-                    <td className="px-5 py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${u.is_active === 'true' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                        {u.is_active === 'true' ? '正常' : '停用'}
-                      </span>
+                {teachers.map((t) => (
+                  <tr key={t.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2.5 font-mono text-xs">{t.username}</td>
+                    <td className="px-3 py-2.5 font-medium text-slate-800">{t.name}</td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex flex-wrap gap-1">
+                        {teacherClassNames(t.id).length > 0 ? (
+                          teacherClassNames(t.id).map((n) => (
+                            <span key={n} className="rounded bg-indigo-50 text-indigo-700 px-2 py-0.5 text-xs">
+                              {n}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-slate-400">未绑定班级</span>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-5 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => handleEdit(u)} className="text-xs text-slate-500 hover:text-indigo-600">编辑</button>
-                        <button onClick={() => handleDelete(u.id)} className="text-xs text-slate-500 hover:text-rose-600">删除</button>
+                    <td className="px-3 py-2.5">
+                      {t.is_active ? (
+                        <span className="text-xs text-emerald-600">正常</span>
+                      ) : (
+                        <span className="text-xs text-slate-400">已停用</span>
+                      )}
+                      {t.must_change_password && <span className="ml-1 text-xs text-amber-600">待改密</span>}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex justify-end gap-1">
+                        <button
+                          onClick={() => {
+                            setEditing(t);
+                            setForm({ username: t.username, name: t.name, password: "" });
+                            setShowForm(true);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => resetPwd(t)}
+                          className="p-1.5 text-slate-400 hover:text-amber-600"
+                        >
+                          <KeyRound className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => remove(t)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {teachers.length === 0 && <p className="py-10 text-center text-sm text-slate-400">暂无中队长</p>}
+          </div>
+        )}
+      </Card>
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+            <h3 className="text-lg font-semibold">{editing ? "编辑中队长" : "新增中队长"}</h3>
+            {formError && <p className="mt-2 text-sm text-rose-600">{formError}</p>}
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="text-xs text-slate-500">工号</label>
+                <input
+                  value={form.username}
+                  disabled={!!editing}
+                  onChange={(e) => setForm({ ...form, username: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">姓名</label>
+                <input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+              </div>
+              {!editing && (
+                <div>
+                  <label className="text-xs text-slate-500">初始密码（至少8位含字母数字）</label>
+                  <input
+                    value={form.password}
+                    onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
+            </div>
+            <div className="mt-5 flex justify-end gap-3">
+              <button onClick={() => setShowForm(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm">
+                取消
+              </button>
+              <button
+                onClick={save}
+                className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700"
+              >
+                保存
+              </button>
+            </div>
           </div>
         </div>
       )}

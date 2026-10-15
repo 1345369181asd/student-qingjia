@@ -1,166 +1,249 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from "react";
+import {
+  BarChart3,
+  Download,
+  TrendingUp,
+  Users,
+  FileCheck,
+  Clock,
+  MapPin,
+} from "lucide-react";
+import { LoadingSpinner, EmptyState, getToken } from "@/components/shared";
 
 interface StatsData {
-  total: number;
-  byStatus: { pending: number; approved: number; rejected: number };
+  summary: {
+    total: number;
+    approved: number;
+    rejected: number;
+    revoked: number;
+    pending: number;
+    checkedIn: number;
+    checkinRate: number;
+    overdue: number;
+  };
   byType: Record<string, number>;
   byClass: Record<string, number>;
-  byDate: Record<string, number>;
+  byReason: Record<string, number>;
+  byDuration: Record<string, number>;
+  approverStats: Array<{ name: string; approved: number; rejected: number }>;
 }
-
-const typeMap: Record<string, string> = { personal: '事假', sick: '病假', other: '其他' };
 
 export default function AdminStatsPage() {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [dateRange, setDateRange] = useState({ start_date: '', end_date: '' });
-
-  const fetchStats = useCallback(async () => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (dateRange.start_date) params.set('start_date', dateRange.start_date);
-    if (dateRange.end_date) params.set('end_date', dateRange.end_date);
-    const res = await fetch(`/api/stats?${params}`);
-    const data = await res.json();
-    setStats(data.data);
-    setLoading(false);
-  }, [dateRange.start_date, dateRange.end_date]);
+  const [dateRange, setDateRange] = useState({ start: "", end: "" });
 
   useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
+    const fetchStats = async () => {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (dateRange.start) params.set("from", dateRange.start);
+      if (dateRange.end) params.set("to", dateRange.end);
+      const res = await fetch(`/api/stats?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { data: StatsData };
+        setStats(data.data);
+      }
+      setLoading(false);
+    };
+    void fetchStats();
+  }, [dateRange]);
+
+  const handleExport = () => {
+    const params = new URLSearchParams();
+    if (dateRange.start) params.set("from", dateRange.start);
+    if (dateRange.end) params.set("to", dateRange.end);
+    window.open(`/api/leaves/export?${params.toString()}`, "_blank");
+  };
 
   if (loading || !stats) {
     return (
-      <div className="max-w-6xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-slate-900">统计报表</h1>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400">加载中...</div>
+      <div className="flex justify-center items-center h-64">
+        <LoadingSpinner />
       </div>
     );
   }
 
-  const maxByClass = Math.max(...Object.values(stats.byClass), 1);
-  const maxByDate = Math.max(...Object.values(stats.byDate), 1);
-  const sortedDates = Object.entries(stats.byDate).sort(([a], [b]) => a.localeCompare(b));
+  const s = stats.summary;
+  const cards = [
+    { label: "总申请数", value: s.total, icon: BarChart3, color: "bg-indigo-100 text-indigo-600" },
+    { label: "已通过", value: s.approved, icon: FileCheck, color: "bg-emerald-100 text-emerald-600" },
+    { label: "处理中", value: s.pending, icon: Clock, color: "bg-amber-100 text-amber-600" },
+    { label: "已驳回", value: s.rejected, icon: Users, color: "bg-rose-100 text-rose-600" },
+    { label: "已销假", value: `${s.checkedIn}（${s.checkinRate}%）`, icon: MapPin, color: "bg-sky-100 text-sky-600" },
+    { label: "逾期未销假", value: s.overdue, icon: TrendingUp, color: "bg-red-100 text-red-600" },
+  ];
+
+  const maxType = Math.max(1, ...Object.values(stats.byType));
+  const maxClass = Math.max(1, ...Object.values(stats.byClass));
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">统计报表</h1>
-          <p className="text-slate-500 mt-1">请假数据多维度分析</p>
-        </div>
-        <div className="flex gap-2 items-center">
-          <input
-            type="date"
-            value={dateRange.start_date}
-            onChange={e => setDateRange(p => ({ ...p, start_date: e.target.value }))}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none focus:border-indigo-500"
-          />
-          <span className="text-slate-400 text-sm">至</span>
-          <input
-            type="date"
-            value={dateRange.end_date}
-            onChange={e => setDateRange(p => ({ ...p, end_date: e.target.value }))}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none focus:border-indigo-500"
-          />
-        </div>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-2xl font-bold text-slate-900">统计报表</h1>
+        <button
+          onClick={handleExport}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-sm font-medium"
+        >
+          <Download className="w-4 h-4" />
+          导出 CSV
+        </button>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <p className="text-sm text-slate-500">总申请数</p>
-          <p className="text-3xl font-bold text-slate-900 mt-1">{stats.total}</p>
+      <div className="bg-white rounded-xl p-4 flex items-center gap-4 flex-wrap shadow-sm">
+        <div className="flex items-center gap-2 text-sm">
+          <label className="text-slate-600">开始日期</label>
+          <input
+            type="date"
+            value={dateRange.start}
+            onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+            className="border border-slate-300 rounded-lg px-3 py-2"
+          />
         </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <p className="text-sm text-slate-500">待审批</p>
-          <p className="text-3xl font-bold text-amber-600 mt-1">{stats.byStatus.pending}</p>
+        <div className="flex items-center gap-2 text-sm">
+          <label className="text-slate-600">结束日期</label>
+          <input
+            type="date"
+            value={dateRange.end}
+            onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+            className="border border-slate-300 rounded-lg px-3 py-2"
+          />
         </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <p className="text-sm text-slate-500">已通过</p>
-          <p className="text-3xl font-bold text-emerald-600 mt-1">{stats.byStatus.approved}</p>
+        {(dateRange.start || dateRange.end) && (
+          <button
+            onClick={() => setDateRange({ start: "", end: "" })}
+            className="text-sm text-slate-500 hover:text-slate-700"
+          >
+            清除筛选
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        {cards.map((card) => (
+          <div key={card.label} className="bg-white rounded-xl p-4 shadow-sm">
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center mb-3 ${card.color}`}>
+              <card.icon className="w-5 h-5" />
+            </div>
+            <p className="text-xl font-bold text-slate-900">{card.value}</p>
+            <p className="text-sm text-slate-500">{card.label}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-xl p-6 shadow-sm">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-indigo-600" />
+            按请假类型统计
+          </h2>
+          {Object.keys(stats.byType).length === 0 ? (
+            <EmptyState text="暂无数据" />
+          ) : (
+            <div className="space-y-4">
+              {Object.entries(stats.byType).map(([type, count]) => (
+                <div key={type}>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-slate-600">{type}</span>
+                    <span className="font-medium">{count} 次</span>
+                  </div>
+                  <div className="bg-slate-100 rounded-full h-3 overflow-hidden">
+                    <div
+                      className="bg-indigo-500 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${(count / maxType) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <p className="text-sm text-slate-500">已驳回</p>
-          <p className="text-3xl font-bold text-rose-600 mt-1">{stats.byStatus.rejected}</p>
+
+        <div className="bg-white rounded-xl p-6 shadow-sm">
+          <h2 className="text-lg font-semibold mb-4">按班级统计</h2>
+          {Object.keys(stats.byClass).length === 0 ? (
+            <EmptyState text="暂无数据" />
+          ) : (
+            <div className="space-y-4">
+              {Object.entries(stats.byClass)
+                .sort((a, b) => b[1] - a[1])
+                .map(([name, count]) => (
+                  <div key={name}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-slate-600 truncate mr-2">{name}</span>
+                      <span className="font-medium shrink-0">{count} 次</span>
+                    </div>
+                    <div className="bg-slate-100 rounded-full h-3 overflow-hidden">
+                      <div
+                        className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${(count / maxClass) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* By type */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <h3 className="font-semibold text-slate-900 mb-4">按请假类型</h3>
+        <div className="bg-white rounded-xl p-6 shadow-sm">
+          <h2 className="text-lg font-semibold mb-4">按时长分布</h2>
           <div className="space-y-3">
-            {Object.entries(stats.byType).map(([type, count]) => (
-              <div key={type} className="flex items-center gap-3">
-                <span className="text-sm text-slate-600 w-16">{typeMap[type] || type}</span>
-                <div className="flex-1 bg-slate-100 rounded-full h-6 overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-500 rounded-full flex items-center justify-end pr-2 transition-all"
-                    style={{ width: `${Math.max((count / stats.total) * 100, 8)}%` }}
-                  >
-                    <span className="text-xs text-white font-medium">{count}</span>
-                  </div>
-                </div>
-                <span className="text-sm text-slate-400 w-12 text-right">
-                  {stats.total > 0 ? Math.round((count / stats.total) * 100) : 0}%
-                </span>
+            {Object.entries(stats.byDuration).map(([label, count]) => (
+              <div key={label} className="flex items-center justify-between text-sm">
+                <span className="text-slate-600">{label}</span>
+                <span className="font-medium text-slate-900">{count} 次</span>
               </div>
             ))}
-            {Object.keys(stats.byType).length === 0 && (
-              <p className="text-sm text-slate-400 text-center py-4">暂无数据</p>
-            )}
           </div>
         </div>
 
-        {/* By class */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <h3 className="font-semibold text-slate-900 mb-4">按班级</h3>
-          <div className="space-y-3">
-            {Object.entries(stats.byClass).map(([cls, count]) => (
-              <div key={cls} className="flex items-center gap-3">
-                <span className="text-sm text-slate-600 w-28 truncate">{cls}</span>
-                <div className="flex-1 bg-slate-100 rounded-full h-6 overflow-hidden">
-                  <div
-                    className="h-full bg-emerald-500 rounded-full flex items-center justify-end pr-2 transition-all"
-                    style={{ width: `${Math.max((count / maxByClass) * 100, 8)}%` }}
-                  >
-                    <span className="text-xs text-white font-medium">{count}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {Object.keys(stats.byClass).length === 0 && (
-              <p className="text-sm text-slate-400 text-center py-4">暂无数据</p>
-            )}
-          </div>
-        </div>
-
-        {/* By date - timeline */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6 lg:col-span-2">
-          <h3 className="font-semibold text-slate-900 mb-4">按日期趋势</h3>
-          {sortedDates.length > 0 ? (
-            <div className="flex items-end gap-1 h-40">
-              {sortedDates.map(([date, count]) => (
-                <div key={date} className="flex-1 flex flex-col items-center gap-1">
-                  <span className="text-xs text-slate-500">{count}</span>
-                  <div
-                    className="w-full bg-indigo-400 rounded-t transition-all hover:bg-indigo-500 min-h-[4px]"
-                    style={{ height: `${Math.max((count / maxByDate) * 100, 5)}%` }}
-                  />
-                  <span className="text-[10px] text-slate-400 rotate-[-45deg] origin-left whitespace-nowrap w-0">
-                    {date.slice(5)}
-                  </span>
-                </div>
-              ))}
-            </div>
+        <div className="bg-white rounded-xl p-6 shadow-sm">
+          <h2 className="text-lg font-semibold mb-4">审批人处理量</h2>
+          {stats.approverStats.length === 0 ? (
+            <EmptyState text="暂无审批记录" />
           ) : (
-            <p className="text-sm text-slate-400 text-center py-8">暂无数据</p>
+            <div className="space-y-3">
+              {stats.approverStats
+                .slice()
+                .sort((a, b) => b.approved + b.rejected - (a.approved + a.rejected))
+                .map((a) => (
+                  <div key={a.name} className="flex items-center justify-between text-sm">
+                    <span className="text-slate-700 font-medium">{a.name}</span>
+                    <span className="text-slate-500">
+                      通过 <span className="text-emerald-600 font-semibold">{a.approved}</span> · 驳回{" "}
+                      <span className="text-rose-600 font-semibold">{a.rejected}</span>
+                    </span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl p-6 shadow-sm">
+        <h2 className="text-lg font-semibold mb-4">高频请假事由</h2>
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(stats.byReason).length === 0 ? (
+            <EmptyState text="暂无数据" />
+          ) : (
+            Object.entries(stats.byReason)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 10)
+              .map(([reason, count]) => (
+                <span
+                  key={reason}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-full text-sm"
+                >
+                  {reason}
+                  <span className="text-slate-400 text-xs">×{count}</span>
+                </span>
+              ))
           )}
         </div>
       </div>

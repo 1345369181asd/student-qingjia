@@ -1,66 +1,70 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
-import { getDb } from '@/lib/db';
+import { NextResponse } from "next/server";
+import { getClient } from "@/lib/db";
+import { requireAuth, requireRole } from "@/lib/auth";
+import { writeOperationLog } from "@/lib/logger";
 
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const user = await getCurrentUser();
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: '仅管理员可操作' }, { status: 403 });
-    }
-
-    const { id } = await params;
-    const body = await request.json();
-    const db = getDb();
-
-    const updateData: Record<string, unknown> = {};
-    if (body.name) updateData.name = body.name;
-    if (body.grade) updateData.grade = body.grade;
-    if (body.description !== undefined) updateData.description = body.description;
-    updateData.updated_at = new Date().toISOString();
-
-    const { data, error } = await db
-      .from('classes')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw new Error(`更新失败: ${error.message}`);
-
-    return NextResponse.json({ data });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : '更新失败';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+interface Body {
+  name?: string;
+  grade?: string | null;
+  leader_id?: string | null;
+  campus_id?: string | null;
+  description?: string | null;
+  isActive?: boolean;
 }
 
-export async function DELETE(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const user = await getCurrentUser();
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: '仅管理员可操作' }, { status: 403 });
-    }
+export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = await requireAuth(request);
+  if (user instanceof Response) return user;
+  const roleErr = requireRole(user, ["admin"]);
+  if (roleErr) return roleErr;
 
-    const { id } = await params;
-    const db = getDb();
+  const { id } = await params;
+  const body = (await request.json()) as Body;
+  const db = await getClient();
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  const map: Record<keyof Body, string> = {
+    name: "name",
+    grade: "grade",
+    leader_id: "leader_id",
+    campus_id: "campus_id",
+    description: "description",
+    isActive: "is_active",
+  };
+  (Object.keys(map) as Array<keyof Body>).forEach((k) => {
+    if (body[k] !== undefined) patch[map[k]] = body[k] as unknown;
+  });
 
-    const { error } = await db
-      .from('classes')
-      .delete()
-      .eq('id', id);
+  const { data, error } = await db.from("classes").update(patch).eq("id", id).select().single();
+  if (error) return NextResponse.json({ error: "更新失败" }, { status: 500 });
 
-    if (error) throw new Error(`删除失败: ${error.message}`);
+  await writeOperationLog({
+    operator: user,
+    action: "update_class",
+    targetType: "class",
+    targetId: id,
+    detail: { name: body.name },
+    request,
+  });
+  return NextResponse.json({ data });
+}
 
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : '删除失败';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+// 班级被历史请假快照引用：停用而非物理删除
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = await requireAuth(request);
+  if (user instanceof Response) return user;
+  const roleErr = requireRole(user, ["admin"]);
+  if (roleErr) return roleErr;
+
+  const { id } = await params;
+  const db = await getClient();
+  await db.from("classes").update({ is_active: false, updated_at: new Date().toISOString() }).eq("id", id);
+
+  await writeOperationLog({
+    operator: user,
+    action: "deactivate_class",
+    targetType: "class",
+    targetId: id,
+    request,
+  });
+  return NextResponse.json({ success: true });
 }

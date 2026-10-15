@@ -1,104 +1,125 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
-import { getDb } from '@/lib/db';
+import { NextResponse } from "next/server";
+import { getClient } from "@/lib/db";
+import { requireAuth } from "@/lib/auth";
+import { LEAVE_TYPE_LABEL } from "@/lib/business";
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser();
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: '仅管理员可查看统计' }, { status: 403 });
-    }
+type LeaveRow = {
+  id: string;
+  student_id: string;
+  leave_type: string;
+  status: string;
+  duration_hours: number;
+  reason: string;
+  created_at: string;
+  class_name_snapshot: string | null;
+  checkin_status: string;
+  is_overdue: boolean;
+};
 
-    const { searchParams } = new URL(request.url);
-    const startDate = searchParams.get('start_date');
-    const endDate = searchParams.get('end_date');
-
-    const db = getDb();
-
-    // Build base query filter
-    let baseFilter = db.from('leave_requests').select('id, leave_type, status, student_id, start_date');
-    if (startDate) {
-      baseFilter = baseFilter.gte('start_date', startDate);
-    }
-    if (endDate) {
-      baseFilter = baseFilter.lte('start_date', endDate);
-    }
-
-    const { data: allLeaves, error } = await baseFilter;
-    if (error) throw new Error(`查询失败: ${error.message}`);
-
-    const leaves = allLeaves || [];
-
-    // Total counts
-    const total = leaves.length;
-    const pending = leaves.filter(l => l.status === 'pending').length;
-    const approved = leaves.filter(l => l.status === 'approved').length;
-    const rejected = leaves.filter(l => l.status === 'rejected').length;
-
-    // By leave type
-    const byType: Record<string, number> = {};
-    for (const l of leaves) {
-      byType[l.leave_type] = (byType[l.leave_type] || 0) + 1;
-    }
-
-    // By status
-    const byStatus = { pending, approved, rejected };
-
-    // Get class info for students
-    const studentIds = [...new Set(leaves.map(l => l.student_id))];
-    const studentClassMap: Record<string, string> = {};
-    if (studentIds.length > 0) {
-      const { data: students } = await db
-        .from('users')
-        .select('id, class_id')
-        .in('id', studentIds);
-      if (students) {
-        for (const s of students) {
-          studentClassMap[s.id] = s.class_id || 'unknown';
-        }
-      }
-    }
-
-    // Get class names
-    const classIds = [...new Set(Object.values(studentClassMap))].filter(id => id !== 'unknown');
-    const classNameMap: Record<string, string> = {};
-    if (classIds.length > 0) {
-      const { data: classes } = await db
-        .from('classes')
-        .select('id, name')
-        .in('id', classIds);
-      if (classes) {
-        for (const c of classes) {
-          classNameMap[c.id] = c.name;
-        }
-      }
-    }
-
-    // By class
-    const byClass: Record<string, number> = {};
-    for (const l of leaves) {
-      const classId = studentClassMap[l.student_id] || 'unknown';
-      const className = classNameMap[classId] || '未分班';
-      byClass[className] = (byClass[className] || 0) + 1;
-    }
-
-    // By date (daily)
-    const byDate: Record<string, number> = {};
-    for (const l of leaves) {
-      byDate[l.start_date] = (byDate[l.start_date] || 0) + 1;
-    }
-
-    return NextResponse.json({
-      data: {
-        total,
-        byStatus,
-        byType,
-        byClass,
-        byDate,
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : '查询失败';
-    return NextResponse.json({ error: message }, { status: 500 });
+// 统计报表：按班级/类型/时间维度，支持销假率、审批人处理量
+export async function GET(request: Request) {
+  const user = await requireAuth(request);
+  if (user instanceof Response) return user;
+  if (user.role !== "admin") {
+    return NextResponse.json({ error: "仅管理员可查看统计" }, { status: 403 });
   }
+  const { searchParams } = new URL(request.url);
+  const classId = searchParams.get("class_id") || undefined;
+  const leaveType = searchParams.get("leave_type") || undefined;
+  const from = searchParams.get("from") || undefined;
+  const to = searchParams.get("to") || undefined;
+
+  const db = await getClient();
+  let q = db
+    .from("leave_requests")
+    .select(
+      "id,student_id,leave_type,status,duration_hours,reason,created_at,class_name_snapshot,checkin_status,is_overdue"
+    );
+  if (classId) {
+    const { data: stuRows } = await db.from("users").select("id").eq("class_id", classId);
+    const ids = (stuRows ?? []).map((s) => s.id as string);
+    q = ids.length > 0 ? q.in("student_id", ids) : q.eq("student_id", "00000000-0000-0000-0000-000000000000");
+  }
+  if (leaveType) q = q.eq("leave_type", leaveType);
+  if (from) q = q.gte("created_at", from);
+  if (to) q = q.lte("created_at", `${to}T23:59:59+08:00`);
+
+  const { data, error } = await q;
+  if (error) return NextResponse.json({ error: `统计失败: ${error.message}` }, { status: 500 });
+  const leaves = (data ?? []) as LeaveRow[];
+
+  const finished = leaves.filter((l) => l.status === "approved");
+  const summary = {
+    total: leaves.length,
+    approved: leaves.filter((l) => l.status === "approved").length,
+    rejected: leaves.filter((l) => l.status === "rejected").length,
+    revoked: leaves.filter((l) => l.status === "revoked").length,
+    pending: leaves.filter((l) => ["pending", "approving"].includes(l.status)).length,
+    checkedIn: finished.filter((l) => l.checkin_status === "done").length,
+    checkinRate: finished.length > 0 ? Math.round((finished.filter((l) => l.checkin_status === "done").length / finished.length) * 1000) / 10 : 0,
+    overdue: leaves.filter((l) => l.is_overdue).length,
+  };
+
+  const byType: Record<string, number> = {};
+  const byStatus: Record<string, number> = {};
+  const byClass: Record<string, number> = {};
+  const byDate: Record<string, number> = {};
+  const byReason: Record<string, number> = {};
+  const byDuration: Record<string, number> = {
+    "4小时以内": 0,
+    "4-8小时": 0,
+    "8-24小时": 0,
+    "1-3天": 0,
+    "3天以上": 0,
+  };
+
+  for (const l of leaves) {
+    byType[LEAVE_TYPE_LABEL[l.leave_type] ?? l.leave_type] =
+      (byType[LEAVE_TYPE_LABEL[l.leave_type] ?? l.leave_type] ?? 0) + 1;
+    byStatus[l.status] = (byStatus[l.status] ?? 0) + 1;
+    const className = l.class_name_snapshot || "未分班";
+    byClass[className] = (byClass[className] ?? 0) + 1;
+    const day = (l.created_at || "").slice(0, 10);
+    if (day) byDate[day] = (byDate[day] ?? 0) + 1;
+    const reason = l.reason?.trim();
+    if (reason) {
+      const key = reason.length > 12 ? `${reason.slice(0, 12)}…` : reason;
+      byReason[key] = (byReason[key] ?? 0) + 1;
+    }
+    const h = l.duration_hours;
+    if (h <= 4) byDuration["4小时以内"] += 1;
+    else if (h <= 8) byDuration["4-8小时"] += 1;
+    else if (h <= 24) byDuration["8-24小时"] += 1;
+    else if (h <= 72) byDuration["1-3天"] += 1;
+    else byDuration["3天以上"] += 1;
+  }
+
+  // 审批人处理量
+  const leaveIds = leaves.map((l) => l.id);
+  const { data: records } =
+    leaveIds.length > 0
+      ? await db.from("approval_records").select("approver_name,action").in("leave_request_id", leaveIds)
+      : { data: [] };
+  const approverCount: Record<string, { name: string; approved: number; rejected: number }> = {};
+  for (const r of (records ?? []) as Array<{ approver_name: string | null; action: string }>) {
+    if (!r.approver_name) continue;
+    if (!approverCount[r.approver_name]) {
+      approverCount[r.approver_name] = { name: r.approver_name, approved: 0, rejected: 0 };
+    }
+    if (r.action === "approved") approverCount[r.approver_name].approved += 1;
+    if (r.action === "rejected") approverCount[r.approver_name].rejected += 1;
+  }
+
+  return NextResponse.json({
+    data: {
+      summary,
+      byType,
+      byStatus,
+      byClass,
+      byDate,
+      byReason,
+      byDuration,
+      approverStats: Object.values(approverCount),
+    },
+  });
 }

@@ -1,33 +1,38 @@
-'use client';
+"use client";
 
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
-interface User {
+export type UserRole = "student" | "teacher" | "admin";
+
+export interface AuthUser {
   id: string;
   username: string;
   name: string;
-  role: string;
+  role: UserRole;
   class_id: string | null;
+  must_change_password?: boolean;
 }
 
-interface AuthContextType {
-  user: User | null;
+interface AuthContextValue {
+  user: AuthUser | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<{ error?: string }>;
-  register: (data: { username: string; password: string; name: string; class_id?: string }) => Promise<{ error?: string }>;
+  setUser: (u: AuthUser | null) => void;
+  login: (username: string, password: string) => Promise<{ must_change_password?: boolean }>;
   logout: () => Promise<void>;
-  refreshUser: () => Promise<void>;
+  refresh: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | null>(null);
+const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
-  const refreshUser = useCallback(async () => {
+  const refresh = useCallback(async () => {
     try {
-      const res = await fetch('/api/auth/me');
+      const res = await fetch("/api/auth/me", { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
@@ -42,51 +47,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    refreshUser();
-  }, [refreshUser]);
+    refresh();
+  }, [refresh]);
 
   const login = async (username: string, password: string) => {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
+      credentials: "include",
     });
     const data = await res.json();
-    if (res.ok) {
-      setUser(data.user);
-      return {};
+    if (!res.ok) {
+      throw new Error(data.error || "登录失败");
     }
-    return { error: data.error };
-  };
-
-  const register = async (regData: { username: string; password: string; name: string; class_id?: string }) => {
-    const res = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(regData),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      setUser(data.user);
-      return {};
-    }
-    return { error: data.error };
+    setUser(data.user);
+    return { must_change_password: data.must_change_password };
   };
 
   const logout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setUser(null);
+    router.push("/login");
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, setUser, login, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-export function useAuth() {
+export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }

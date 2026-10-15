@@ -1,172 +1,220 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from "react";
+import { Card, PageHeader } from "@/components/shared";
+import { Loader2, Plus, Pencil, Trash2 } from "lucide-react";
 
-interface ClassRecord {
+interface ClassItem {
   id: string;
   name: string;
-  grade: string;
+  grade: string | null;
   description: string | null;
-  created_at: string;
+  leader_id: string | null;
+  leader?: { name: string } | null;
+}
+interface Teacher {
+  id: string;
+  username: string;
+  name: string;
 }
 
-export default function AdminClassesPage() {
-  const [classes, setClasses] = useState<ClassRecord[]>([]);
+export default function AdminClasses() {
+  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', grade: '', description: '' });
-  const [error, setError] = useState('');
+  const [editing, setEditing] = useState<ClassItem | null>(null);
+  const [form, setForm] = useState({ name: "", grade: "", description: "", leader_id: "" });
+  const [error, setError] = useState("");
 
-  const fetchData = useCallback(async () => {
+  const load = async () => {
     setLoading(true);
-    const res = await fetch('/api/classes');
-    const data = await res.json();
-    setClasses(data.data || []);
+    const [c, t] = await Promise.all([
+      fetch("/api/classes?withLeader=true", { credentials: "include" }).then((r) => r.json()),
+      fetch("/api/users?role=teacher", { credentials: "include" }).then((r) => r.json()),
+    ]);
+    setClasses(c.data ?? []);
+    setTeachers(t.data ?? []);
     setLoading(false);
+  };
+  useEffect(() => {
+    load();
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    if (editingId) {
-      const res = await fetch(`/api/classes/${editingId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || '更新失败');
-        return;
-      }
-    } else {
-      const res = await fetch('/api/classes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || '创建失败'); return; }
-    }
-
+  const save = async () => {
+    setError("");
+    if (!form.name.trim()) return setError("班级名称必填");
+    const payload = {
+      name: form.name,
+      grade: form.grade || null,
+      description: form.description || null,
+      leader_id: form.leader_id || null,
+    };
+    const res = await fetch(editing ? `/api/classes/${editing.id}` : "/api/classes", {
+      method: editing ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (!res.ok) return setError(d.error || "保存失败");
     setShowForm(false);
-    setEditingId(null);
-    setForm({ name: '', grade: '', description: '' });
-    fetchData();
+    load();
   };
 
-  const handleEdit = (c: ClassRecord) => {
-    setEditingId(c.id);
-    setForm({ name: c.name, grade: c.grade, description: c.description || '' });
-    setShowForm(true);
-    setError('');
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除该班级吗？')) return;
-    await fetch(`/api/classes/${id}`, { method: 'DELETE' });
-    fetchData();
+  const remove = async (c: ClassItem) => {
+    if (confirm(`确定删除班级「${c.name}」吗？`)) {
+      const res = await fetch(`/api/classes/${c.id}`, { method: "DELETE", credentials: "include" });
+      const d = await res.json();
+      if (!res.ok) alert(d.error || "删除失败");
+      load();
+    }
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">班级管理</h1>
-          <p className="text-slate-500 mt-1">共 {classes.length} 个班级</p>
-        </div>
-        <button
-          onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: '', grade: '', description: '' }); setError(''); }}
-          className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-        >
-          添加班级
-        </button>
-      </div>
-
+    <div className="space-y-6">
+      <PageHeader
+        title="班级管理"
+        description="维护班级并绑定中队长（一个中队长可管理多个班级）"
+        actions={
+          <button
+            onClick={() => {
+              setEditing(null);
+              setForm({ name: "", grade: "", description: "", leader_id: "" });
+              setError("");
+              setShowForm(true);
+            }}
+            className="inline-flex items-center gap-1.5 bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-indigo-700"
+          >
+            <Plus className="h-4 w-4" />
+            新增班级
+          </button>
+        }
+      />
+      <Card className="p-5">
+        {loading ? (
+          <div className="flex justify-center py-10">
+            <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
+                  <th className="px-3 py-2 font-medium">班级名称</th>
+                  <th className="px-3 py-2 font-medium">年级</th>
+                  <th className="px-3 py-2 font-medium">中队长</th>
+                  <th className="px-3 py-2 font-medium">备注</th>
+                  <th className="px-3 py-2 font-medium text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {classes.map((c) => (
+                  <tr key={c.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2.5 font-medium text-slate-800">{c.name}</td>
+                    <td className="px-3 py-2.5 text-slate-600">{c.grade ?? "-"}</td>
+                    <td className="px-3 py-2.5">
+                      {c.leader?.name ? (
+                        <span className="rounded bg-indigo-50 text-indigo-700 px-2 py-0.5 text-xs">
+                          {c.leader.name}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-amber-600">未指派</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-500 max-w-xs truncate">{c.description ?? "-"}</td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex justify-end gap-1">
+                        <button
+                          onClick={() => {
+                            setEditing(c);
+                            setForm({
+                              name: c.name,
+                              grade: c.grade ?? "",
+                              description: c.description ?? "",
+                              leader_id: c.leader_id ?? "",
+                            });
+                            setError("");
+                            setShowForm(true);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => remove(c)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {classes.length === 0 && <p className="py-10 text-center text-sm text-slate-400">暂无班级</p>}
+          </div>
+        )}
+      </Card>
       {showForm && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
-          <h3 className="font-semibold text-slate-900 mb-4">{editingId ? '编辑班级' : '添加班级'}</h3>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && <div className="bg-rose-50 text-rose-600 text-sm px-4 py-2 rounded-lg border border-rose-100">{error}</div>}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+            <h3 className="text-lg font-semibold">{editing ? "编辑班级" : "新增班级"}</h3>
+            {error && <p className="mt-2 text-sm text-rose-600">{error}</p>}
+            <div className="mt-4 space-y-3">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">班级名称</label>
+                <label className="text-xs text-slate-500">班级名称 *</label>
                 <input
-                  type="text"
                   value={form.name}
-                  onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-500 outline-none text-sm"
-                  placeholder="如：计算机2401班"
-                  required
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">年级</label>
+                <label className="text-xs text-slate-500">年级</label>
                 <input
-                  type="text"
                   value={form.grade}
-                  onChange={e => setForm(p => ({ ...p, grade: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-500 outline-none text-sm"
-                  placeholder="如：2024级"
-                  required
+                  onChange={(e) => setForm({ ...form, grade: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">描述</label>
+                <label className="text-xs text-slate-500">负责中队长</label>
+                <select
+                  value={form.leader_id}
+                  onChange={(e) => setForm({ ...form, leader_id: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">未指派</option>
+                  {teachers.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}（{t.username}）
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">备注</label>
                 <input
-                  type="text"
                   value={form.description}
-                  onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-500 outline-none text-sm"
-                  placeholder="专业方向等"
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
             </div>
-            <div className="flex gap-2">
-              <button type="submit" className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700">
-                {editingId ? '保存' : '创建'}
-              </button>
-              <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-slate-600 border border-slate-200 text-sm rounded-lg hover:bg-slate-50">
+            <div className="mt-5 flex justify-end gap-3">
+              <button onClick={() => setShowForm(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm">
                 取消
               </button>
+              <button
+                onClick={save}
+                className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700"
+              >
+                保存
+              </button>
             </div>
-          </form>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400">加载中...</div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {classes.map(c => (
-            <div key={c.id} className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-sm transition-shadow">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-semibold text-slate-900">{c.name}</h3>
-                  <p className="text-sm text-indigo-600 mt-0.5">{c.grade}</p>
-                  {c.description && <p className="text-sm text-slate-500 mt-1">{c.description}</p>}
-                </div>
-                <div className="flex gap-1">
-                  <button onClick={() => handleEdit(c)} className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition-colors">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
-                  <button onClick={() => handleDelete(c.id)} className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+          </div>
         </div>
       )}
     </div>

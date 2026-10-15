@@ -1,88 +1,122 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
-import { getDb } from '@/lib/db';
+import { NextResponse } from "next/server";
+import { getClient } from "@/lib/db";
+import { requireAuth, requireRole, hashPassword } from "@/lib/auth";
+import { writeOperationLog } from "@/lib/logger";
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser();
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: '仅管理员可操作' }, { status: 403 });
-    }
+// 用户列表（仅管理员），支持 role / keyword / classId 筛选
+export async function GET(request: Request) {
+  const user = await requireAuth(request);
+  if (user instanceof Response) return user;
+  const roleErr = requireRole(user, ["admin"]);
+  if (roleErr) return roleErr;
 
-    const { searchParams } = new URL(request.url);
-    const role = searchParams.get('role');
-    const classId = searchParams.get('class_id');
-    const keyword = searchParams.get('keyword');
+  const { searchParams } = new URL(request.url);
+  const role = searchParams.get("role");
+  const keyword = searchParams.get("keyword")?.trim();
+  const classId = searchParams.get("classId");
 
-    const db = getDb();
-    let query = db
-      .from('users')
-      .select('*, classes(name)')
-      .neq('role', 'admin')
-      .order('created_at', { ascending: false });
-
-    if (role) query = query.eq('role', role);
-    if (classId) query = query.eq('class_id', classId);
-    if (keyword) {
-      query = query.or(`username.ilike.%${keyword}%,name.ilike.%${keyword}%`);
-    }
-
-    const { data, error } = await query;
-    if (error) throw new Error(`查询失败: ${error.message}`);
-
-    return NextResponse.json({ data: data || [] });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : '查询失败';
-    return NextResponse.json({ error: message }, { status: 500 });
+  const db = await getClient();
+  let query = db
+    .from("users")
+    .select(
+      "id,username,name,role,class_id,campus_id,student_no,grade,major,department,student_status,email,phone,is_active,must_change_password,failed_login_count,last_login_at,created_at,classes:class_id(name)"
+    )
+    .order("created_at", { ascending: true });
+  if (role) query = query.eq("role", role);
+  if (classId) query = query.eq("class_id", classId);
+  if (keyword) {
+    query = query.or(
+      `username.ilike.%${keyword}%,name.ilike.%${keyword}%,student_no.ilike.%${keyword}%,phone.ilike.%${keyword}%`
+    );
   }
+
+  const { data, error } = await query;
+  if (error) return NextResponse.json({ error: "查询失败" }, { status: 500 });
+  return NextResponse.json({ data });
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser();
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: '仅管理员可操作' }, { status: 403 });
-    }
+export async function POST(request: Request) {
+  const user = await requireAuth(request);
+  if (user instanceof Response) return user;
+  const roleErr = requireRole(user, ["admin"]);
+  if (roleErr) return roleErr;
 
-    const { username, password, name, role, class_id } = await request.json();
+  const body = (await request.json()) as {
+    username?: string;
+    password?: string;
+    name?: string;
+    role?: "student" | "teacher" | "admin";
+    classId?: string | null;
+    campusId?: string | null;
+    studentNo?: string;
+    grade?: string;
+    major?: string;
+    department?: string;
+    email?: string;
+    phone?: string;
+  };
 
-    if (!username || !password || !name || !role) {
-      return NextResponse.json({ error: '请填写完整信息' }, { status: 400 });
-    }
-
-    const db = getDb();
-
-    // Check duplicate
-    const { data: existing } = await db
-      .from('users')
-      .select('id')
-      .eq('username', username)
-      .maybeSingle();
-
-    if (existing) {
-      return NextResponse.json({ error: '该账号已存在' }, { status: 409 });
-    }
-
-    const { hashPassword } = await import('@/lib/auth');
-    const password_hash = await hashPassword(password);
-
-    const { data, error } = await db
-      .from('users')
-      .insert({
-        username,
-        password_hash,
-        name,
-        role,
-        class_id: class_id || null,
-      })
-      .select()
-      .single();
-
-    if (error) throw new Error(`创建失败: ${error.message}`);
-
-    return NextResponse.json({ data }, { status: 201 });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : '创建失败';
-    return NextResponse.json({ error: message }, { status: 500 });
+  if (!body.username?.trim() || !body.name?.trim() || !body.role) {
+    return NextResponse.json({ error: "账号、姓名和角色必填" }, { status: 400 });
   }
+  if (!body.password || body.password.length < 6) {
+    return NextResponse.json({ error: "初始密码至少 6 位" }, { status: 400 });
+  }
+  if (!["student", "teacher", "admin"].includes(body.role)) {
+    return NextResponse.json({ error: "角色不合法" }, { status: 400 });
+  }
+  if (body.role === "student" && !body.classId) {
+    return NextResponse.json({ error: "学生必须分配班级" }, { status: 400 });
+  }
+
+  const db = await getClient();
+  const { data: exists } = await db
+    .from("users")
+    .select("id")
+    .eq("username", body.username.trim())
+    .maybeSingle();
+  if (exists) {
+    return NextResponse.json({ error: "账号已存在" }, { status: 400 });
+  }
+
+  // 学生年级信息快照来源
+  let classGrade: string | null = null;
+  if (body.classId) {
+    const { data } = await db.from("classes").select("name,grade").eq("id", body.classId).maybeSingle();
+    classGrade = ((data ?? {}) as { grade?: string | null }).grade ?? null;
+  }
+
+  const passwordHash = await hashPassword(body.password);
+  const { data, error } = await db
+    .from("users")
+    .insert({
+      username: body.username.trim(),
+      password_hash: passwordHash,
+      name: body.name.trim(),
+      role: body.role,
+      class_id: body.role === "student" ? body.classId : null,
+      campus_id: body.campusId ?? null,
+      student_no: body.role === "student" ? body.studentNo?.trim() || body.username.trim() : null,
+      grade: body.grade ?? classGrade,
+      major: null,
+      department: null,
+      student_status: body.role === "student" ? "enrolled" : null,
+      email: body.email ?? null,
+      phone: body.phone ?? null,
+      must_change_password: true, // 管理员创建后首次登录强制修改
+    })
+    .select("id,username,name,role")
+    .single();
+
+  if (error) return NextResponse.json({ error: "创建失败" }, { status: 500 });
+
+  await writeOperationLog({
+    operator: user,
+    action: "create_user",
+    targetType: "user",
+    targetId: (data as { id: string }).id,
+    detail: { username: body.username, role: body.role },
+    request,
+  });
+  return NextResponse.json({ data });
 }

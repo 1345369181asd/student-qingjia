@@ -1,132 +1,261 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  Card,
+  PageHeader,
+  LeaveStatusBadge,
+  LeaveTypeBadge,
+  CheckinBadge,
+} from "@/components/shared";
+import { Loader2, MapPin, XCircle, FileText, ChevronDown, ChevronUp } from "lucide-react";
 
-interface LeaveRecord {
+interface ApprovalRecord {
+  node_order: number;
+  node_name: string;
+  approver_name: string | null;
+  status: string;
+  comment: string | null;
+  handled_at: string | null;
+  created_at: string;
+}
+interface Attachment {
   id: string;
+  file_name: string;
+  file_size: number;
+}
+interface LeaveRow {
+  id: string;
+  request_no: string;
   leave_type: string;
   start_date: string;
   end_date: string;
+  duration_days: number;
   reason: string;
+  contact_phone: string | null;
   status: string;
-  approval_comment: string | null;
-  teacher: { name: string } | null;
+  checkin_status: string;
+  checkin_remark: string | null;
   created_at: string;
+  final_comment: string | null;
+  approver_final_name: string | null;
+  approval_records?: ApprovalRecord[];
+  attachments?: Attachment[];
 }
 
-const statusMap: Record<string, { label: string; className: string }> = {
-  pending: { label: '待审批', className: 'bg-amber-50 text-amber-700 border-amber-200' },
-  approved: { label: '已通过', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  rejected: { label: '已驳回', className: 'bg-rose-50 text-rose-700 border-rose-200' },
-};
-
-const typeMap: Record<string, string> = {
-  personal: '事假',
-  sick: '病假',
-  other: '其他',
-};
-
-export default function StudentRecordsPage() {
-  const [records, setRecords] = useState<LeaveRecord[]>([]);
+export default function StudentRecords() {
+  const [leaves, setLeaves] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [tip, setTip] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
 
-  const fetchRecords = useCallback(async () => {
-    setLoading(true);
-    const params = filter !== 'all' ? `?status=${filter}` : '';
-    const res = await fetch(`/api/leaves${params}`);
+  const load = async () => {
+    const res = await fetch("/api/leaves?include=detail", { credentials: "include" });
     const data = await res.json();
-    setRecords(data.data || []);
+    setLeaves(data.data ?? []);
     setLoading(false);
-  }, [filter]);
-
+  };
   useEffect(() => {
-    fetchRecords();
-  }, [fetchRecords]);
+    load();
+  }, []);
 
-  const handleWithdraw = async (id: string) => {
-    if (!confirm('确定要撤回这条请假申请吗？')) return;
-    const res = await fetch(`/api/leaves/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      fetchRecords();
+  const revoke = async (id: string) => {
+    if (!confirm("确定撤销该请假申请吗？")) return;
+    setActionId(id);
+    const res = await fetch(`/api/leaves/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    const data = await res.json();
+    setTip({ id, ok: res.ok, msg: data.error ?? "已撤销" });
+    setActionId(null);
+    if (res.ok) load();
+  };
+
+  const checkin = async (id: string) => {
+    setActionId(id);
+    setTip(null);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
+      );
+      const res = await fetch(`/api/leaves/${id}/checkin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: Math.round(pos.coords.accuracy),
+        }),
+      });
+      const data = await res.json();
+      setTip({ id, ok: res.ok, msg: data.error ?? data.message ?? "销假待确认" });
+      if (res.ok) load();
+    } catch {
+      setTip({ id, ok: false, msg: "定位失败，请检查位置权限，或使用模拟打卡" });
+    } finally {
+      setActionId(null);
     }
   };
 
-  return (
-    <div className="max-w-4xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">请假记录</h1>
-        <div className="flex gap-2">
-          {[
-            { value: 'all', label: '全部' },
-            { value: 'pending', label: '待审批' },
-            { value: 'approved', label: '已通过' },
-            { value: 'rejected', label: '已驳回' },
-          ].map(f => (
-            <button
-              key={f.value}
-              onClick={() => setFilter(f.value)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                filter === f.value
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      </div>
+  const mockCheckin = async (id: string) => {
+    setActionId(id);
+    const res = await fetch(`/api/leaves/${id}/checkin`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ lat: 0, lng: 0, accuracy: 10, mock: true }),
+    });
+    const data = await res.json();
+    setTip({ id, ok: res.ok, msg: data.error ?? "模拟销假待确认" });
+    setActionId(null);
+    if (res.ok) load();
+  };
 
+  const downloadFile = async (attId: string, name: string) => {
+    const res = await fetch(`/api/files/${attId}/url`, { credentials: "include" });
+    const data = await res.json();
+    if (res.ok && data.url) window.open(data.url, "_blank");
+    else alert(data.error ?? "获取下载链接失败");
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="请假记录" description="查看申请进度、审批轨迹、附件与销假状态" />
       {loading ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400">
-          加载中...
+        <div className="flex justify-center py-16">
+          <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
         </div>
-      ) : records.length === 0 ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400">
-          暂无请假记录
-        </div>
+      ) : leaves.length === 0 ? (
+        <Card className="p-10 text-center text-sm text-slate-400">
+          暂无记录，
+          <Link href="/student/apply" className="text-indigo-600 hover:underline">
+            去发起请假
+          </Link>
+        </Card>
       ) : (
         <div className="space-y-3">
-          {records.map(record => {
-            const status = statusMap[record.status] || statusMap.pending;
-            return (
-              <div key={record.id} className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-sm transition-shadow">
-                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700">
-                        {typeMap[record.leave_type] || record.leave_type}
-                      </span>
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium border ${status.className}`}>
-                        {status.label}
-                      </span>
-                    </div>
-                    <p className="text-sm text-slate-900 font-medium">{record.reason}</p>
-                    <p className="text-xs text-slate-400 mt-1.5">
-                      {record.start_date} 至 {record.end_date}
-                    </p>
-                    {record.teacher && (
-                      <p className="text-xs text-slate-400 mt-1">审批人：{record.teacher.name}</p>
-                    )}
-                    {record.approval_comment && (
-                      <p className="text-xs text-slate-500 mt-1 bg-slate-50 inline-block px-2 py-1 rounded">
-                        审批意见：{record.approval_comment}
-                      </p>
-                    )}
-                  </div>
-                  {record.status === 'pending' && (
+          {leaves.map((leave) => (
+            <Card key={leave.id} className="p-5">
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <LeaveTypeBadge type={leave.leave_type} />
+                  <LeaveStatusBadge status={leave.status} />
+                  <CheckinBadge status={leave.checkin_status} />
+                  <span className="text-xs text-slate-400 ml-auto">{leave.request_no}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                  <p className="text-slate-500">
+                    时间：<span className="text-slate-800">{leave.start_date} ~ {leave.end_date}</span>
+                  </p>
+                  <p className="text-slate-500">
+                    天数：<span className="text-slate-800">{leave.duration_days} 天</span>
+                  </p>
+                  <p className="text-slate-500">
+                    提交：<span className="text-slate-800">{leave.created_at.slice(0, 16).replace("T", " ")}</span>
+                  </p>
+                </div>
+                <p className="text-sm text-slate-700">事由：{leave.reason}</p>
+                {leave.checkin_remark && (
+                  <p className="text-xs text-amber-600">销假备注：{leave.checkin_remark}</p>
+                )}
+                {tip?.id === leave.id && (
+                  <p className={`text-sm ${tip.ok ? "text-emerald-600" : "text-rose-600"}`}>{tip.msg}</p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {["pending", "in_progress"].includes(leave.status) && (
                     <button
-                      onClick={() => handleWithdraw(record.id)}
-                      className="px-3 py-1.5 text-sm text-rose-600 border border-rose-200 rounded-lg hover:bg-rose-50 transition-colors shrink-0"
+                      onClick={() => revoke(leave.id)}
+                      disabled={actionId === leave.id}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 text-rose-600 px-3 py-1.5 text-xs font-medium hover:bg-rose-50 disabled:opacity-50"
                     >
-                      撤回
+                      <XCircle className="h-3.5 w-3.5" />
+                      撤销申请
                     </button>
                   )}
+                  {leave.status === "approved" && ["none", "rejected"].includes(leave.checkin_status) && (
+                    <>
+                      <button
+                        onClick={() => checkin(leave.id)}
+                        disabled={actionId === leave.id}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 text-white px-3 py-1.5 text-xs font-medium hover:bg-rose-700 disabled:opacity-50"
+                      >
+                        <MapPin className="h-3.5 w-3.5" />
+                        定位销假
+                      </button>
+                      <button
+                        onClick={() => mockCheckin(leave.id)}
+                        disabled={actionId === leave.id}
+                        className="rounded-lg border border-slate-300 text-slate-500 px-3 py-1.5 text-xs hover:bg-slate-50"
+                      >
+                        模拟打卡（演示）
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => setExpanded(expanded === leave.id ? null : leave.id)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 text-slate-600 px-3 py-1.5 text-xs hover:bg-slate-50 ml-auto"
+                  >
+                    {expanded === leave.id ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    审批轨迹
+                  </button>
                 </div>
+                {expanded === leave.id && (
+                  <div className="mt-2 border-t border-slate-100 pt-4 space-y-4">
+                    <div>
+                      <p className="text-xs font-medium text-slate-500 mb-2">审批流程</p>
+                      <ol className="relative border-l-2 border-slate-100 ml-2 space-y-4">
+                        {(leave.approval_records ?? []).map((r) => (
+                          <li key={r.node_order} className="ml-4">
+                            <span className={`absolute -left-[7px] h-3 w-3 rounded-full ${
+                              r.status === "approved" ? "bg-emerald-500" :
+                              r.status === "rejected" ? "bg-rose-500" :
+                              r.status === "cancelled" ? "bg-slate-300" : "bg-amber-400"
+                            }`} />
+                            <p className="text-sm font-medium text-slate-800">
+                              {r.node_order}. {r.node_name}
+                              <span className="ml-2 text-xs text-slate-400">
+                                {r.approver_name ?? "待分配"}
+                              </span>
+                            </p>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              {r.status === "pending"
+                                ? `等待处理（${r.created_at.slice(0, 16).replace("T", " ")}）`
+                                : `${r.status === "approved" ? "通过" : r.status === "rejected" ? "驳回" : "终止"} · ${r.handled_at?.slice(0, 16).replace("T", " ")}`}
+                            </p>
+                            {r.comment && <p className="text-xs text-slate-600 mt-1">意见：{r.comment}</p>}
+                          </li>
+                        ))}
+                      </ol>
+                      {leave.status === "rejected" && leave.final_comment && (
+                        <p className="mt-3 text-sm text-rose-600">最终驳回意见：{leave.final_comment}</p>
+                      )}
+                    </div>
+                    {leave.attachments && leave.attachments.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 mb-2">证明材料</p>
+                        <div className="flex flex-wrap gap-2">
+                          {leave.attachments.map((a) => (
+                            <button
+                              key={a.id}
+                              onClick={() => downloadFile(a.id, a.file_name)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-indigo-300 hover:text-indigo-600"
+                            >
+                              <FileText className="h-3.5 w-3.5" />
+                              {a.file_name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            );
-          })}
+            </Card>
+          ))}
         </div>
       )}
     </div>

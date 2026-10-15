@@ -1,49 +1,67 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
-import { getDb } from '@/lib/db';
+import { NextResponse } from "next/server";
+import { getClient } from "@/lib/db";
+import { requireAuth, requireRole } from "@/lib/auth";
+import { writeOperationLog } from "@/lib/logger";
 
-export async function GET() {
-  try {
-    const db = getDb();
-    const { data, error } = await db
-      .from('classes')
-      .select('*')
-      .order('grade', { ascending: false })
-      .order('name');
-
-    if (error) throw new Error(`查询失败: ${error.message}`);
-
-    return NextResponse.json({ data: data || [] });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : '查询失败';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+// 班级列表：登录用户可查（注册关闭后仍需供学生/教师展示组织信息）
+export async function GET(request: Request) {
+  const user = await requireAuth(request);
+  if (user instanceof Response) return user;
+  const db = await getClient();
+  const { data, error } = await db
+    .from("classes")
+    .select("*")
+    .order("grade", { ascending: false })
+    .order("name", { ascending: true });
+  if (error) return NextResponse.json({ error: "查询失败" }, { status: 500 });
+  // 补充中队长姓名（前端也可用 users 列表自行映射）
+  const { data: leaders } = await db.from("users").select("id,name,username").eq("role", "teacher");
+  const leaderMap = new Map((leaders ?? []).map((l) => [l.id, l]));
+  const withLeader = (data ?? []).map((c) => ({
+    ...c,
+    leader: c.leader_id ? leaderMap.get(c.leader_id) ?? null : null,
+  }));
+  return NextResponse.json({ data: withLeader });
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser();
-    if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: '仅管理员可操作' }, { status: 403 });
-    }
+export async function POST(request: Request) {
+  const user = await requireAuth(request);
+  if (user instanceof Response) return user;
+  const roleErr = requireRole(user, ["admin"]);
+  if (roleErr) return roleErr;
 
-    const { name, grade, description } = await request.json();
-    if (!name || !grade) {
-      return NextResponse.json({ error: '请填写班级名称和年级' }, { status: 400 });
-    }
-
-    const db = getDb();
-    const { data, error } = await db
-      .from('classes')
-      .insert({ name, grade, description: description || null })
-      .select()
-      .single();
-
-    if (error) throw new Error(`创建失败: ${error.message}`);
-
-    return NextResponse.json({ data }, { status: 201 });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : '创建失败';
-    return NextResponse.json({ error: message }, { status: 500 });
+  const body = (await request.json()) as {
+    name?: string;
+    grade?: string | null;
+    leader_id?: string | null;
+    campus_id?: string | null;
+    description?: string | null;
+  };
+  if (!body.name?.trim()) {
+    return NextResponse.json({ error: "班级名称必填" }, { status: 400 });
   }
+
+  const db = await getClient();
+  const { data, error } = await db
+    .from("classes")
+    .insert({
+      name: body.name.trim(),
+      grade: body.grade ?? null,
+      leader_id: body.leader_id ?? null,
+      campus_id: body.campus_id ?? null,
+      description: body.description ?? null,
+    })
+    .select()
+    .single();
+  if (error) return NextResponse.json({ error: "创建失败" }, { status: 500 });
+
+  await writeOperationLog({
+    operator: user,
+    action: "create_class",
+    targetType: "class",
+    targetId: (data as { id: string }).id,
+    detail: { name: body.name },
+    request,
+  });
+  return NextResponse.json({ data });
 }

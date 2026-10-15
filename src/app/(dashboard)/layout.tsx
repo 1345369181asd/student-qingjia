@@ -1,145 +1,265 @@
-'use client';
+"use client";
 
-import { useAuth } from '@/contexts/auth-context';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "@/contexts/auth-context";
+import { cn } from "@/lib/utils";
+import {
+  GraduationCap,
+  LayoutDashboard,
+  FileText,
+  CheckSquare,
+  ClipboardCheck,
+  Users,
+  School,
+  BarChart3,
+  LogOut,
+  Menu,
+  X,
+  Bell,
+  Settings,
+  History,
+  MapPin,
+  KeyRound,
+} from "lucide-react";
 
-const navItems: Record<string, { label: string; icon: string; path: string }[]> = {
+interface MessageItem {
+  id: string;
+  type: string;
+  title: string;
+  content: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+const navItems: Record<string, Array<{ href: string; label: string; icon: React.ElementType }>> = {
   student: [
-    { label: '提交请假', icon: 'file-plus', path: '/student' },
-    { label: '请假记录', icon: 'list', path: '/student/records' },
+    { href: "/student", label: "我的申请", icon: LayoutDashboard },
+    { href: "/student/apply", label: "发起请假", icon: FileText },
+    { href: "/student/records", label: "请假记录", icon: History },
   ],
   teacher: [
-    { label: '待审批', icon: 'clipboard-check', path: '/teacher' },
-    { label: '已处理', icon: 'check-circle', path: '/teacher/processed' },
+    { href: "/teacher", label: "待办审批", icon: CheckSquare },
+    { href: "/teacher/processed", label: "已处理记录", icon: ClipboardCheck },
+    { href: "/teacher/checkins", label: "销假确认", icon: MapPin },
   ],
   admin: [
-    { label: '请假总览', icon: 'layout-dashboard', path: '/admin' },
-    { label: '学生管理', icon: 'users', path: '/admin/students' },
-    { label: '教师管理', icon: 'user-check', path: '/admin/teachers' },
-    { label: '班级管理', icon: 'school', path: '/admin/classes' },
-    { label: '统计报表', icon: 'bar-chart', path: '/admin/stats' },
+    { href: "/admin", label: "工作台", icon: LayoutDashboard },
+    { href: "/admin/students", label: "学生管理", icon: Users },
+    { href: "/admin/teachers", label: "中队长管理", icon: Users },
+    { href: "/admin/classes", label: "班级管理", icon: School },
+    { href: "/admin/leaves", label: "全部请假", icon: FileText },
+    { href: "/admin/stats", label: "统计报表", icon: BarChart3 },
+    { href: "/admin/settings", label: "基础配置", icon: Settings },
+    { href: "/admin/logs", label: "操作日志", icon: History },
   ],
 };
 
-function NavIcon({ name, className }: { name: string; className?: string }) {
-  const icons: Record<string, React.ReactNode> = {
-    'file-plus': <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M12 18h-6 M9 15h6" />,
-    'list': <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01" />,
-    'clipboard-check': <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />,
-    'check-circle': <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />,
-    'layout-dashboard': <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1v-2zM14 12a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1h-4a1 1 0 01-1-1v-5z" />,
-    'users': <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />,
-    'user-check': <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z M16 14l2 2 4-4" />,
-    'school': <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />,
-    'bar-chart': <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />,
-  };
-  return (
-    <svg className={className || 'w-5 h-5'} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      {icons[name]}
-    </svg>
-  );
-}
+const roleLabel: Record<string, string> = {
+  student: "学生",
+  teacher: "中队长",
+  admin: "管理员",
+};
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { user, logout } = useAuth();
+  const { user, loading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+  const [messages, setMessages] = useState<MessageItem[]>([]);
+  const [unread, setUnread] = useState(0);
 
-  const handleLogout = async () => {
-    await logout();
-    router.push('/login');
-    router.refresh();
+  useEffect(() => {
+    if (!loading && !user) router.push("/login");
+    if (user?.must_change_password) router.push("/password-change");
+  }, [loading, user, router]);
+
+  const fetchMessages = async () => {
+    try {
+      const res = await fetch("/api/messages", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setMessages((data.data ?? []).slice(0, 10));
+        setUnread(data.unread_count ?? 0);
+      }
+    } catch {
+      // ignore
+    }
   };
 
-  const role = user?.role || 'student';
-  const items = navItems[role] || [];
-  const roleLabels: Record<string, string> = { student: '学生', teacher: '教师', admin: '管理员' };
+  useEffect(() => {
+    if (user) {
+      fetchMessages();
+      const timer = setInterval(fetchMessages, 60000);
+      return () => clearInterval(timer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  const markAllRead = async () => {
+    await fetch("/api/messages/read-all", { method: "POST", credentials: "include" });
+    setUnread(0);
+    setMessages((m) => m.map((x) => ({ ...x, is_read: true })));
+  };
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+      </div>
+    );
+  }
+
+  const items = navItems[user.role] ?? [];
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
-      {/* Mobile overlay */}
+      {/* 移动端遮罩 */}
       {sidebarOpen && (
-        <div className="fixed inset-0 bg-black/30 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
+        <div
+          className="fixed inset-0 bg-slate-900/40 z-30 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
       )}
 
-      {/* Sidebar */}
-      <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r border-slate-200 flex flex-col transform transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-        <div className="p-6 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="font-bold text-slate-900 text-sm">请假管理系统</h2>
-              <p className="text-xs text-slate-400">{roleLabels[role]}</p>
-            </div>
+      {/* 侧边栏 */}
+      <aside
+        className={cn(
+          "fixed lg:sticky top-0 left-0 z-40 h-screen w-64 bg-slate-900 text-slate-300 flex flex-col transition-transform duration-200",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        )}
+      >
+        <div className="h-16 flex items-center gap-2.5 px-6 border-b border-slate-800">
+          <div className="h-8 w-8 rounded-lg bg-indigo-600 flex items-center justify-center">
+            <GraduationCap className="h-5 w-5 text-white" />
           </div>
+          <span className="font-semibold text-white text-sm">学生请假管理系统</span>
+          <button
+            className="ml-auto lg:hidden text-slate-400"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="关闭菜单"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
-
-        <nav className="flex-1 p-4 space-y-1">
-          {items.map(item => {
-            const active = pathname === item.path;
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+          {items.map((item) => {
+            const active =
+              item.href === `/${user.role}`
+                ? pathname === item.href
+                : pathname.startsWith(item.href);
+            const Icon = item.icon;
             return (
               <Link
-                key={item.path}
-                href={item.path}
+                key={item.href}
+                href={item.href}
                 onClick={() => setSidebarOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors",
                   active
-                    ? 'bg-indigo-50 text-indigo-700'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                }`}
+                    ? "bg-indigo-600 text-white font-medium"
+                    : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                )}
               >
-                <NavIcon name={item.icon} className="w-5 h-5" />
+                <Icon className="h-4.5 w-4.5 shrink-0" />
                 {item.label}
               </Link>
             );
           })}
         </nav>
-
-        <div className="p-4 border-t border-slate-100">
-          <div className="flex items-center gap-3 px-3 py-2">
-            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 text-sm font-medium">
-              {user?.name?.charAt(0)}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-slate-900 truncate">{user?.name}</p>
-              <p className="text-xs text-slate-400 truncate">{user?.username}</p>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="text-slate-400 hover:text-rose-500 transition-colors"
-              title="退出登录"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-            </button>
-          </div>
+        <div className="p-3 border-t border-slate-800">
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+          >
+            <LogOut className="h-4.5 w-4.5" />
+            退出登录
+          </button>
         </div>
       </aside>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Mobile header */}
-        <header className="lg:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3">
-          <button onClick={() => setSidebarOpen(true)} className="text-slate-600">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
+      {/* 主内容 */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        <header className="sticky top-0 z-20 h-16 bg-white border-b border-slate-200 flex items-center px-4 sm:px-6 gap-3">
+          <button
+            className="lg:hidden text-slate-500"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="打开菜单"
+          >
+            <Menu className="h-5 w-5" />
           </button>
-          <h1 className="font-semibold text-slate-900">请假管理系统</h1>
+          <div className="flex-1" />
+          <Link
+            href="/password-change"
+            className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 hover:text-indigo-600 transition-colors"
+          >
+            <KeyRound className="h-4 w-4" />
+            修改密码
+          </Link>
+          <div className="relative">
+            <button
+              onClick={() => setBellOpen((v) => !v)}
+              className="relative p-2 rounded-lg hover:bg-slate-100 transition-colors"
+              aria-label="消息"
+            >
+              <Bell className="h-5 w-5 text-slate-600" />
+              {unread > 0 && (
+                <span className="absolute top-1 right-1 h-4 min-w-4 px-1 rounded-full bg-rose-500 text-white text-[10px] font-medium flex items-center justify-center">
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              )}
+            </button>
+            {bellOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setBellOpen(false)} />
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-xl border border-slate-200 shadow-lg z-50 max-h-96 overflow-y-auto">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+                    <span className="text-sm font-medium text-slate-900">站内消息</span>
+                    {unread > 0 && (
+                      <button
+                        onClick={markAllRead}
+                        className="text-xs text-indigo-600 hover:underline"
+                      >
+                        全部已读
+                      </button>
+                    )}
+                  </div>
+                  {messages.length === 0 ? (
+                    <p className="px-4 py-8 text-center text-sm text-slate-400">暂无消息</p>
+                  ) : (
+                    messages.map((m) => (
+                      <div
+                        key={m.id}
+                        className={cn(
+                          "px-4 py-3 border-b border-slate-50 last:border-0",
+                          !m.is_read && "bg-indigo-50/50"
+                        )}
+                      >
+                        <p className="text-sm font-medium text-slate-800">{m.title}</p>
+                        {m.content && <p className="text-xs text-slate-500 mt-0.5">{m.content}</p>}
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          {new Date(m.created_at).toLocaleString("zh-CN", { hour12: false })}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2.5 pl-3 border-l border-slate-200">
+            <div className="h-8 w-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-medium">
+              {user.name.slice(0, 1)}
+            </div>
+            <div className="hidden sm:block">
+              <p className="text-sm font-medium text-slate-800 leading-tight">{user.name}</p>
+              <p className="text-xs text-slate-400 leading-tight">{roleLabel[user.role]}</p>
+            </div>
+          </div>
         </header>
-
-        <main className="flex-1 p-4 lg:p-8 overflow-auto">
-          {children}
-        </main>
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1400px] w-full mx-auto">{children}</main>
       </div>
     </div>
   );

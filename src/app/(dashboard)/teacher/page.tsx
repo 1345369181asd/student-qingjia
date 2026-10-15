@@ -1,159 +1,239 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useMemo, useState } from "react";
 
-interface LeaveRequest {
+import {
+  Card,
+  PageHeader,
+  LeaveStatusBadge,
+  LeaveTypeBadge,
+  LoadingSpinner,
+  EmptyState,
+  getToken,
+} from "@/components/shared";
+
+interface LeaveRow {
   id: string;
+  request_no: string;
   leave_type: string;
-  start_date: string;
-  end_date: string;
-  reason: string;
+  start_time: string;
+  end_time: string;
+  duration_hours: number;
+  leave_school: boolean;
   status: string;
-  student: { id: string; username: string; name: string; class_id: string } | null;
-  class: { name: string } | null;
-  created_at: string;
+  reason: string;
+  destination: string | null;
+  contact_phone: string | null;
+  student_name_snapshot: string | null;
+  student_no_snapshot: string | null;
+  class_name_snapshot: string | null;
+  files?: Array<{ id: string; file_name: string; content_type: string | null }>;
 }
 
-const typeMap: Record<string, string> = {
-  personal: '事假',
-  sick: '病假',
-  other: '其他',
-};
-
-export default function TeacherPendingPage() {
-  const [requests, setRequests] = useState<LeaveRequest[]>([]);
+export default function TeacherPending() {
+  const [leaves, setLeaves] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState<string | null>(null);
-  const [comment, setComment] = useState('');
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [comment, setComment] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const fetchRequests = useCallback(async () => {
+  const load = async () => {
     setLoading(true);
-    const res = await fetch('/api/leaves?type=pending');
-    const data = await res.json();
-    setRequests(data.data || []);
+    const res = await fetch("/api/leaves?scope=todo&pageSize=100", {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    const data = (await res.json()) as { data: LeaveRow[] };
+    setLeaves(data.data ?? []);
     setLoading(false);
-  }, []);
+  };
 
   useEffect(() => {
-    fetchRequests();
-  }, [fetchRequests]);
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const handleApprove = async (id: string, action: 'approved' | 'rejected') => {
-    setProcessing(id);
-    const res = await fetch(`/api/leaves/${id}/approve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, comment: activeId === id ? comment : '' }),
+  const allSelected = useMemo(
+    () => leaves.length > 0 && leaves.every((lv) => selected.has(lv.id)),
+    [leaves, selected]
+  );
+
+  const toggleAll = () => {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(leaves.map((lv) => lv.id)));
+  };
+
+  const submit = async (id: string, action: "approved" | "rejected", batch = false) => {
+    setSubmitting(true);
+    const ids = batch ? Array.from(selected) : [id];
+    const res = await fetch(batch ? "/api/leaves/batch-approve" : `/api/leaves/${id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+      body: JSON.stringify(
+        batch
+          ? { ids, action, comment: comment.trim() || undefined }
+          : { action, comment: comment.trim() || undefined }
+      ),
     });
     if (res.ok) {
-      fetchRequests();
-      setActiveId(null);
-      setComment('');
+      setActionId(null);
+      setComment("");
+      setSelected(new Set());
+      await load();
+    } else {
+      const d = (await res.json().catch(() => null)) as { error?: string } | null;
+      alert(d?.error ?? "操作失败");
     }
-    setProcessing(null);
+    setSubmitting(false);
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">待审批申请</h1>
-        <p className="text-slate-500 mt-1">
-          共 {requests.length} 条待审批的请假申请
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="待审批请假"
+        description="审批你管理范围内学生的请假申请"
+        actions={
+          selected.size > 0 ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-500">已选 {selected.size} 条</span>
+              <button
+                disabled={submitting}
+                onClick={() => void submit("", "approved", true)}
+                className="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+              >
+                批量通过
+              </button>
+              <button
+                disabled={submitting}
+                onClick={() => void submit("", "rejected", true)}
+                className="px-3 py-1.5 text-sm bg-rose-600 text-white rounded-lg hover:bg-rose-700 disabled:opacity-50"
+              >
+                批量驳回
+              </button>
+            </div>
+          ) : undefined
+        }
+      />
 
       {loading ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400">
-          加载中...
+        <div className="flex justify-center py-16">
+          <LoadingSpinner />
         </div>
-      ) : requests.length === 0 ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
-          <div className="text-slate-400 mb-2">
-            <svg className="w-12 h-12 mx-auto mb-3 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <p className="text-slate-500">暂无待审批的请假申请</p>
-        </div>
+      ) : leaves.length === 0 ? (
+        <EmptyState text="暂无待审批申请" />
       ) : (
-        <div className="space-y-4">
-          {requests.map(req => (
-            <div key={req.id} className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-sm transition-shadow">
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700">
-                      {typeMap[req.leave_type] || req.leave_type}
-                    </span>
-                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-                      待审批
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 text-xs font-medium">
-                      {req.student?.name?.charAt(0)}
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-slate-900">{req.student?.name}</span>
-                      <span className="text-xs text-slate-400 ml-2">{req.student?.username}</span>
-                      {(req.student as unknown as Record<string, Record<string, string>> | undefined)?.classes && <span className="text-xs text-slate-400 ml-2">{(req.student as unknown as Record<string, Record<string, string>>).classes.name}</span>}
-                    </div>
-                  </div>
-
-                  <p className="text-sm text-slate-700 mb-1.5">{req.reason}</p>
-                  <p className="text-xs text-slate-400">
-                    {req.start_date} 至 {req.end_date}
-                  </p>
-                </div>
-
-                <div className="flex flex-col gap-2 shrink-0">
-                  {activeId === req.id ? (
-                    <>
+        <Card className="p-0 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="px-4 py-3 w-10">
+                    <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium">学生</th>
+                  <th className="px-4 py-3 text-left font-medium">类型</th>
+                  <th className="px-4 py-3 text-left font-medium">起止时间</th>
+                  <th className="px-4 py-3 text-left font-medium">时长</th>
+                  <th className="px-4 py-3 text-left font-medium">事由</th>
+                  <th className="px-4 py-3 text-left font-medium">凭证</th>
+                  <th className="px-4 py-3 text-right font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {leaves.map((lv) => (
+                  <tr key={lv.id} className="hover:bg-slate-50 align-top">
+                    <td className="px-4 py-3">
                       <input
-                        type="text"
-                        value={comment}
-                        onChange={e => setComment(e.target.value)}
-                        placeholder="审批意见（可选）"
-                        className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 focus:border-indigo-500 outline-none w-48"
+                        type="checkbox"
+                        checked={selected.has(lv.id)}
+                        onChange={() => {
+                          const next = new Set(selected);
+                          if (next.has(lv.id)) next.delete(lv.id);
+                          else next.add(lv.id);
+                          setSelected(next);
+                        }}
                       />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleApprove(req.id, 'approved')}
-                          disabled={processing === req.id}
-                          className="flex-1 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-                        >
-                          通过
-                        </button>
-                        <button
-                          onClick={() => handleApprove(req.id, 'rejected')}
-                          disabled={processing === req.id}
-                          className="flex-1 px-3 py-1.5 text-sm bg-rose-600 text-white rounded-lg hover:bg-rose-700 disabled:opacity-50 transition-colors"
-                        >
-                          驳回
-                        </button>
-                        <button
-                          onClick={() => { setActiveId(null); setComment(''); }}
-                          className="px-3 py-1.5 text-sm text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
-                        >
-                          取消
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => setActiveId(req.id)}
-                      className="px-4 py-2 text-sm font-medium text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors"
-                    >
-                      审批
-                    </button>
-                  )}
-                </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-slate-800">{lv.student_name_snapshot}</p>
+                      <p className="text-xs text-slate-400">
+                        {lv.student_no_snapshot} · {lv.class_name_snapshot}
+                      </p>
+                      <p className="font-mono text-[11px] text-slate-300 mt-0.5">{lv.request_no}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <LeaveTypeBadge type={lv.leave_type} />
+                      {lv.leave_school && (
+                        <span className="ml-1 text-xs text-amber-600">离校</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap text-xs">
+                      {new Date(lv.start_time).toLocaleString("zh-CN", { hour12: false })}
+                      <br />~ {new Date(lv.end_time).toLocaleString("zh-CN", { hour12: false })}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{lv.duration_hours} 小时</td>
+                    <td className="px-4 py-3 text-slate-600 max-w-[220px]">
+                      <p className="line-clamp-2">{lv.reason}</p>
+                      {lv.destination && <p className="text-xs text-slate-400 mt-1">去向：{lv.destination}</p>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {lv.files && lv.files.length > 0 ? (
+                        <span className="text-xs text-indigo-600">{lv.files.length} 个附件</span>
+                      ) : (
+                        <span className="text-xs text-slate-300">无</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => {
+                          setActionId(actionId === lv.id ? null : lv.id);
+                          setComment("");
+                        }}
+                        className="text-sm text-indigo-600 hover:text-indigo-800"
+                      >
+                        审批
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {actionId && (
+            <div className="border-t border-slate-200 bg-slate-50 p-4 space-y-3">
+              <textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                rows={2}
+                placeholder="审批意见（可选，驳回时建议填写原因）"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setActionId(null)}
+                  className="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-100"
+                >
+                  取消
+                </button>
+                <button
+                  disabled={submitting}
+                  onClick={() => void submit(actionId, "rejected")}
+                  className="px-4 py-2 text-sm bg-rose-600 text-white rounded-lg hover:bg-rose-700 disabled:opacity-50"
+                >
+                  驳回
+                </button>
+                <button
+                  disabled={submitting}
+                  onClick={() => void submit(actionId, "approved")}
+                  className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  通过
+                </button>
               </div>
             </div>
-          ))}
-        </div>
+          )}
+        </Card>
       )}
     </div>
   );
