@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Card, PageHeader } from "@/components/shared";
+import { Card, PageHeader, authHeaders } from "@/components/shared";
 import { Loader2, Plus, Upload, Download, Pencil, Trash2, KeyRound, X } from "lucide-react";
 
 interface ClassItem {
@@ -42,7 +42,7 @@ export default function AdminStudents() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadClasses = async () => {
-    const d = await (await fetch("/api/classes", { credentials: "include" })).json();
+    const d = await (await fetch("/api/classes", { headers: authHeaders() })).json();
     setClasses(d.data ?? []);
   };
   const loadStudents = async () => {
@@ -50,7 +50,7 @@ export default function AdminStudents() {
     const params = new URLSearchParams();
     if (keyword) params.set("keyword", keyword);
     if (classFilter) params.set("class_id", classFilter);
-    const d = await (await fetch(`/api/users?role=student&${params}`, { credentials: "include" })).json();
+    const d = await (await fetch(`/api/users?role=student&${params}`, { headers: authHeaders() })).json();
     setStudents(d.data ?? []);
     setLoading(false);
   };
@@ -80,8 +80,7 @@ export default function AdminStudents() {
     if (editing) {
       const res = await fetch(`/api/users/${editing.id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ name: form.name, class_id: form.class_id }),
       });
       const d = await res.json();
@@ -89,8 +88,7 @@ export default function AdminStudents() {
     } else {
       const res = await fetch("/api/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ ...form, role: "student" }),
       });
       const d = await res.json();
@@ -102,7 +100,7 @@ export default function AdminStudents() {
 
   const remove = async (s: Student) => {
     if (!confirm(`确定停用学生「${s.name}」吗？停用后无法登录。`)) return;
-    await fetch(`/api/users/${s.id}`, { method: "DELETE", credentials: "include" });
+    await fetch(`/api/users/${s.id}`, { method: "DELETE", headers: authHeaders() });
     loadStudents();
   };
 
@@ -111,8 +109,7 @@ export default function AdminStudents() {
     if (!pwd) return;
     const res = await fetch(`/api/users/${s.id}/reset-password`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ password: pwd }),
     });
     const d = await res.json();
@@ -124,8 +121,7 @@ export default function AdminStudents() {
     setCsvText(text);
     const res = await fetch("/api/students/import", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ csv: text, mode: "preview" }),
     });
     const d = await res.json();
@@ -140,8 +136,7 @@ export default function AdminStudents() {
   const commitImport = async () => {
     const res = await fetch("/api/students/import", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ csv: csvText, mode: "commit" }),
     });
     const d = await res.json();

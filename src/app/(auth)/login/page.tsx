@@ -24,13 +24,11 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const result = await login(username, password);
-      if (result.must_change_password) {
+      const loggedUser = await login(username, password);
+      if (loggedUser.mustChangePassword) {
         router.push("/password-change");
       } else {
-        const res = await fetch("/api/auth/me", { credentials: "include" });
-        const data = await res.json();
-        router.push(roleHome[data.user.role] ?? "/login");
+        router.push(roleHome[loggedUser.role] ?? "/login");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
@@ -100,7 +98,7 @@ export default function LoginPage() {
           <div className="grid grid-cols-3 gap-2 text-xs">
             <button
               type="button"
-              onClick={() => fillDemo("admin", "Admin@123")}
+              onClick={() => fillDemo("admin", "admin123")}
               className="rounded-lg border border-slate-200 px-2 py-2 hover:border-indigo-400 hover:bg-indigo-50 text-left transition-colors"
             >
               <p className="font-medium text-slate-700">管理员</p>
@@ -108,19 +106,19 @@ export default function LoginPage() {
             </button>
             <button
               type="button"
-              onClick={() => fillDemo("T001", "Teacher@123")}
+              onClick={() => fillDemo("T2024001", "teacher123")}
               className="rounded-lg border border-slate-200 px-2 py-2 hover:border-indigo-400 hover:bg-indigo-50 text-left transition-colors"
             >
               <p className="font-medium text-slate-700">中队长</p>
-              <p className="text-slate-400">T001</p>
+              <p className="text-slate-400">T2024001</p>
             </button>
             <button
               type="button"
-              onClick={() => fillDemo("S001", "Student@123")}
+              onClick={() => fillDemo("S2024001", "student123")}
               className="rounded-lg border border-slate-200 px-2 py-2 hover:border-indigo-400 hover:bg-indigo-50 text-left transition-colors"
             >
               <p className="font-medium text-slate-700">学生</p>
-              <p className="text-slate-400">S001</p>
+              <p className="text-slate-400">S2024001</p>
             </button>
           </div>
         </div>

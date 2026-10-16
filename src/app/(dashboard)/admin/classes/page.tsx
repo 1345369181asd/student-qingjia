@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, PageHeader } from "@/components/shared";
+import { Card, PageHeader, authHeaders } from "@/components/shared";
 import { Loader2, Plus, Pencil, Trash2 } from "lucide-react";
 
 interface ClassItem {
@@ -30,8 +30,8 @@ export default function AdminClasses() {
   const load = async () => {
     setLoading(true);
     const [c, t] = await Promise.all([
-      fetch("/api/classes?withLeader=true", { credentials: "include" }).then((r) => r.json()),
-      fetch("/api/users?role=teacher", { credentials: "include" }).then((r) => r.json()),
+      fetch("/api/classes?withLeader=true", { headers: authHeaders() }).then((r) => r.json()),
+      fetch("/api/users?role=teacher", { headers: authHeaders() }).then((r) => r.json()),
     ]);
     setClasses(c.data ?? []);
     setTeachers(t.data ?? []);
@@ -52,8 +52,7 @@ export default function AdminClasses() {
     };
     const res = await fetch(editing ? `/api/classes/${editing.id}` : "/api/classes", {
       method: editing ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     });
     const d = await res.json();
@@ -64,7 +63,7 @@ export default function AdminClasses() {
 
   const remove = async (c: ClassItem) => {
     if (confirm(`确定删除班级「${c.name}」吗？`)) {
-      const res = await fetch(`/api/classes/${c.id}`, { method: "DELETE", credentials: "include" });
+      const res = await fetch(`/api/classes/${c.id}`, { method: "DELETE", headers: authHeaders() });
       const d = await res.json();
       if (!res.ok) alert(d.error || "删除失败");
       load();

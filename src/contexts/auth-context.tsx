@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { TOKEN_KEY, getToken, setToken, clearToken } from "@/components/shared";
 
 export type UserRole = "student" | "teacher" | "admin";
 
@@ -10,17 +11,26 @@ export interface AuthUser {
   username: string;
   name: string;
   role: UserRole;
-  class_id: string | null;
-  must_change_password?: boolean;
+  classId: string | null;
+  campusId?: string | null;
+  studentNo?: string | null;
+  grade?: string | null;
+  major?: string | null;
+  department?: string | null;
+  studentStatus?: string;
+  mustChangePassword?: boolean;
 }
 
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
+  unreadCount: number;
+  todoCount: number;
   setUser: (u: AuthUser | null) => void;
-  login: (username: string, password: string) => Promise<{ must_change_password?: boolean }>;
+  login: (username: string, password: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  refreshCounts: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -28,18 +38,50 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [todoCount, setTodoCount] = useState(0);
   const router = useRouter();
 
-  const refresh = useCallback(async () => {
+  const refreshCounts = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
     try {
-      const res = await fetch("/api/auth/me", { credentials: "include" });
+      const res = await fetch("/api/messages?unreadOnly=1", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (res.ok) {
         const data = await res.json();
-        setUser(data.user);
+        const list: { is_todo?: boolean }[] = data.data ?? [];
+        setUnreadCount(list.length);
+        setTodoCount(list.filter((m) => m.is_todo).length);
+      }
+    } catch {
+      // 忽略角标刷新失败
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const token = getToken();
+    if (!token) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+    try {
+      const res = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data.user as AuthUser);
+        if (typeof data.unreadCount === "number") setUnreadCount(data.unreadCount);
+        if (typeof data.todoCount === "number") setTodoCount(data.todoCount);
       } else {
+        clearToken();
         setUser(null);
       }
     } catch {
+      clearToken();
       setUser(null);
     } finally {
       setLoading(false);
@@ -50,29 +92,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refresh();
   }, [refresh]);
 
-  const login = async (username: string, password: string) => {
+  const login = async (username: string, password: string): Promise<AuthUser> => {
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
-      credentials: "include",
     });
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.error || "登录失败");
     }
-    setUser(data.user);
-    return { must_change_password: data.must_change_password };
+    const loggedUser = data.user as AuthUser;
+    if (data.token) setToken(data.token as string);
+    setUser(loggedUser);
+    void refreshCounts();
+    return loggedUser;
   };
 
   const logout = async () => {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    const token = getToken();
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+    } catch {
+      // 忽略登出接口异常
+    }
+    clearToken();
     setUser(null);
+    setUnreadCount(0);
+    setTodoCount(0);
     router.push("/login");
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, setUser, login, logout, refresh }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        unreadCount,
+        todoCount,
+        setUser,
+        login,
+        logout,
+        refresh,
+        refreshCounts,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -83,3 +150,5 @@ export function useAuth(): AuthContextValue {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
+
+export { TOKEN_KEY };

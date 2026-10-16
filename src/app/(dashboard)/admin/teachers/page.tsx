@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, PageHeader } from "@/components/shared";
+import { Card, PageHeader, authHeaders } from "@/components/shared";
 import { Loader2, Plus, Pencil, Trash2, KeyRound } from "lucide-react";
 
 interface ClassItem {
@@ -29,8 +29,8 @@ export default function AdminTeachers() {
   const load = async () => {
     setLoading(true);
     const [t, c] = await Promise.all([
-      fetch("/api/users?role=teacher", { credentials: "include" }).then((r) => r.json()),
-      fetch("/api/classes", { credentials: "include" }).then((r) => r.json()),
+      fetch("/api/users?role=teacher", { headers: authHeaders() }).then((r) => r.json()),
+      fetch("/api/classes", { headers: authHeaders() }).then((r) => r.json()),
     ]);
     setTeachers(t.data ?? []);
     setClasses(c.data ?? []);
@@ -48,8 +48,7 @@ export default function AdminTeachers() {
     if (editing) {
       const res = await fetch(`/api/users/${editing.id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ name: form.name }),
       });
       const d = await res.json();
@@ -57,8 +56,7 @@ export default function AdminTeachers() {
     } else {
       const res = await fetch("/api/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ ...form, role: "teacher" }),
       });
       const d = await res.json();
@@ -70,7 +68,7 @@ export default function AdminTeachers() {
 
   const remove = async (t: Teacher) => {
     if (confirm(`确定停用中队长「${t.name}」吗？其名下班级将变为无负责人。`)) {
-      await fetch(`/api/users/${t.id}`, { method: "DELETE", credentials: "include" });
+      await fetch(`/api/users/${t.id}`, { method: "DELETE", headers: authHeaders() });
       load();
     }
   };
@@ -80,8 +78,7 @@ export default function AdminTeachers() {
     if (!pwd) return;
     const res = await fetch(`/api/users/${t.id}/reset-password`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ password: pwd }),
     });
     const d = await res.json();

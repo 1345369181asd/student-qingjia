@@ -2,17 +2,29 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Card } from "@/components/shared";
-import { Users, FileText, AlertTriangle, CheckCircle2, RefreshCw, Download } from "lucide-react";
+import { Card, authHeaders, getToken } from "@/components/shared";
+import {
+  Users,
+  FileText,
+  AlertTriangle,
+  CheckCircle2,
+  RefreshCw,
+  Download,
+  School,
+  MapPinned,
+  GitBranch,
+  History,
+} from "lucide-react";
 
 interface Stats {
   summary: {
     total: number;
     approved: number;
     rejected: number;
-    cancelled: number;
+    revoked: number;
     pending: number;
     checkedIn: number;
+    checkinRate: number;
     overdue: number;
   };
 }
@@ -23,7 +35,7 @@ export default function AdminDashboard() {
   const [scanResult, setScanResult] = useState("");
 
   useEffect(() => {
-    fetch("/api/stats", { credentials: "include" })
+    fetch("/api/stats", { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => setStats(d.data));
   }, []);
@@ -31,15 +43,42 @@ export default function AdminDashboard() {
   const scan = async () => {
     setScanning(true);
     setScanResult("");
-    const res = await fetch("/api/admin/scan-alerts", {
-      method: "POST",
-      credentials: "include",
-    });
-    const d = await res.json();
-    setScanning(false);
-    if (res.ok) {
-      setScanResult(`扫描完成：逾期未销假 ${d.data.overdue} 条，审批超时 ${d.data.timeout} 条`);
+    try {
+      const res = await fetch("/api/admin/scan-alerts", {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "扫描失败");
+      setScanResult(
+        `扫描完成：新增逾期未销假预警 ${d.data.overdue ?? 0} 条，审批超时预警 ${
+          d.data.timeout ?? 0
+        } 条`
+      );
+    } catch (err) {
+      setScanResult(err instanceof Error ? err.message : "扫描失败");
+    } finally {
+      setScanning(false);
     }
+  };
+
+  const exportCsv = () => {
+    const token = getToken();
+    // 带鉴权头下载：先取 blob 再触发保存
+    fetch("/api/leaves/export", { headers: authHeaders() })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "请假记录.csv";
+        a.click();
+        URL.revokeObjectURL(url);
+      })
+      .catch(() => {
+        // 兜底：直接打开（带 token query 不支持时忽略）
+        void token;
+      });
   };
 
   const cards = [
@@ -52,9 +91,13 @@ export default function AdminDashboard() {
   const shortcuts = [
     { href: "/admin/students", label: "学生管理 / CSV 导入", icon: Users },
     { href: "/admin/teachers", label: "中队长账号管理", icon: Users },
-    { href: "/admin/leaves", label: "全部请假记录与导出", icon: FileText },
+    { href: "/admin/classes", label: "班级管理", icon: School },
+    { href: "/admin/leaves", label: "全部请假记录", icon: FileText },
     { href: "/admin/stats", label: "统计报表", icon: CheckCircle2 },
-    { href: "/admin/settings", label: "校区围栏 / 类型 / 流程配置", icon: RefreshCw },
+    { href: "/admin/campuses", label: "校区与电子围栏", icon: MapPinned },
+    { href: "/admin/leave-types", label: "请假类型配置", icon: FileText },
+    { href: "/admin/flows", label: "审批流程配置", icon: GitBranch },
+    { href: "/admin/logs", label: "操作日志", icon: History },
   ];
 
   return (
@@ -73,13 +116,13 @@ export default function AdminDashboard() {
             <RefreshCw className={`h-4 w-4 ${scanning ? "animate-spin" : ""}`} />
             扫描超时/逾期
           </button>
-          <Link
-            href="/api/leaves/export"
+          <button
+            onClick={exportCsv}
             className="inline-flex items-center gap-2 bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-indigo-700"
           >
             <Download className="h-4 w-4" />
             导出请假 CSV
-          </Link>
+          </button>
         </div>
       </div>
       {scanResult && (

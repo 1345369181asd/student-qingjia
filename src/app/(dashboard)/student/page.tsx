@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/auth-context";
 import {
@@ -8,16 +8,20 @@ import {
   LeaveStatusBadge,
   LeaveTypeBadge,
   CheckinBadge,
+  LoadingSpinner,
+  authHeaders,
+  formatDateTime,
 } from "@/components/shared";
-import { FilePlus, MapPin, Loader2 } from "lucide-react";
+import { FilePlus, MapPin, Loader2, AlertCircle } from "lucide-react";
 
 interface LeaveRow {
   id: string;
   request_no: string;
   leave_type: string;
-  start_date: string;
-  end_date: string;
-  duration_days: number;
+  leave_type_name?: string;
+  start_time: string;
+  end_time: string;
+  duration_hours: number;
   status: string;
   checkin_status: string;
   checkin_in_fence: boolean | null;
@@ -26,38 +30,41 @@ interface LeaveRow {
   created_at: string;
 }
 
+// 演示用主校区坐标（与 seed 一致），仅用于“模拟定位”采集，围栏判定仍以后端为准
+const DEMO_CAMPUS_COORDS = { lat: 39.9087, lng: 116.3975 };
+
 export default function StudentHome() {
   const { user } = useAuth();
   const [leaves, setLeaves] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [checkinId, setCheckinId] = useState<string | null>(null);
-  const [checkinMsg, setCheckinMsg] = useState("");
-  const [checkinError, setCheckinError] = useState("");
-  const [mockMode, setMockMode] = useState(false);
+  const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const load = async () => {
-    const res = await fetch("/api/leaves", { credentials: "include" });
-    const data = await res.json();
-    setLeaves(data.data ?? []);
-    setLoading(false);
-  };
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/leaves", { headers: authHeaders() });
+      const data = await res.json();
+      setLeaves(data.data ?? []);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   const doCheckin = async (id: string, useMock: boolean) => {
     setCheckinId(id);
-    setCheckinMsg("");
-    setCheckinError("");
+    setToast(null);
     try {
-      let payload: { lat: number; lng: number; accuracy?: number; mock?: boolean };
+      let payload: { lat: number; lng: number; accuracy: number };
       if (useMock) {
-        // 开发环境模拟：主校区坐标（天安门附近模拟，实际用 seed 中的坐标由前端无法获取，使用后端 mock 标记）
-        payload = { lat: 0, lng: 0, accuracy: 10, mock: true };
+        payload = { lat: DEMO_CAMPUS_COORDS.lat, lng: DEMO_CAMPUS_COORDS.lng, accuracy: 12 };
       } else {
         if (!navigator.geolocation) {
-          throw new Error("当前浏览器不支持定位，请联系管理员人工核验");
+          throw new Error("当前浏览器不支持定位，请使用模拟定位或联系管理员人工核验");
         }
         const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
           navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -73,27 +80,37 @@ export default function StudentHome() {
       }
       const res = await fetch(`/api/leaves/${id}/checkin`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "销假失败");
-      setCheckinMsg(data.message ?? "销假申请已提交，等待中队长确认");
+      if (data.status === "ok" || data.checkin_status === "done") {
+        setToast({ ok: true, text: "定位在围栏内，已自动完成销假" });
+      } else {
+        setToast({
+          ok: true,
+          text: data.in_fence
+            ? "销假打卡成功，等待中队长确认"
+            : "检测到不在校区围栏内，已转为人工核验申请",
+        });
+      }
       load();
     } catch (err) {
-      const msg = err instanceof GeolocationPositionError
-        ? "定位失败：" + (err.message || "请允许位置权限")
-        : err instanceof Error
-          ? err.message
-          : "销假失败";
-      setCheckinError(msg);
+      const msg =
+        err instanceof GeolocationPositionError
+          ? "定位失败：" + (err.message || "请允许位置权限")
+          : err instanceof Error
+            ? err.message
+            : "销假失败";
+      setToast({ ok: false, text: msg });
     } finally {
       setCheckinId(null);
     }
   };
 
-  const pending = leaves.filter((l) => ["pending", "in_progress"].includes(l.status));
+  const pendingCount = leaves.filter((l) => ["pending", "approving"].includes(l.status)).length;
+  const approvedCount = leaves.filter((l) => l.status === "approved").length;
   const needCheckin = leaves.find(
     (l) => l.status === "approved" && ["none", "rejected"].includes(l.checkin_status)
   );
@@ -121,20 +138,16 @@ export default function StudentHome() {
         </Card>
         <Card className="p-5">
           <p className="text-sm text-slate-500">审批中</p>
-          <p className="mt-2 text-2xl font-bold text-amber-600">{pending.length}</p>
+          <p className="mt-2 text-2xl font-bold text-amber-600">{pendingCount}</p>
         </Card>
         <Card className="p-5">
           <p className="text-sm text-slate-500">已通过</p>
-          <p className="mt-2 text-2xl font-bold text-emerald-600">
-            {leaves.filter((l) => l.status === "approved").length}
-          </p>
+          <p className="mt-2 text-2xl font-bold text-emerald-600">{approvedCount}</p>
         </Card>
         <Card className="p-5">
           <p className="text-sm text-slate-500">待销假</p>
           <p className="mt-2 text-2xl font-bold text-rose-600">
-            {leaves.filter(
-              (l) => l.status === "approved" && l.checkin_status !== "done"
-            ).length}
+            {leaves.filter((l) => l.status === "approved" && l.checkin_status !== "done").length}
           </p>
         </Card>
       </div>
@@ -148,10 +161,9 @@ export default function StudentHome() {
             <div className="flex-1">
               <h2 className="font-semibold text-slate-900">您有已批准的请假需要返校销假</h2>
               <p className="text-sm text-slate-500 mt-0.5">
-                编号 {needCheckin.request_no}，应返校日期 {needCheckin.end_date}。请在校区围栏内打卡，经中队长确认后完成销假。
+                编号 {needCheckin.request_no}，应返校时间 {formatDateTime(needCheckin.end_time)}
+                。请在校区围栏内打卡，经中队长确认后完成销假。
               </p>
-              {checkinMsg && <p className="text-sm text-emerald-600 mt-2">{checkinMsg}</p>}
-              {checkinError && <p className="text-sm text-rose-600 mt-2">{checkinError}</p>}
             </div>
             <div className="flex flex-col gap-2 shrink-0">
               <button
@@ -159,29 +171,39 @@ export default function StudentHome() {
                 disabled={checkinId === needCheckin.id}
                 className="inline-flex items-center justify-center gap-2 bg-rose-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-rose-700 disabled:opacity-50"
               >
-                {checkinId === needCheckin.id && !mockMode && <Loader2 className="h-4 w-4 animate-spin" />}
+                {checkinId === needCheckin.id && <Loader2 className="h-4 w-4 animate-spin" />}
                 定位销假
               </button>
               <button
-                onClick={() => {
-                  setMockMode(true);
-                  doCheckin(needCheckin.id, true);
-                }}
+                onClick={() => doCheckin(needCheckin.id, true)}
                 disabled={checkinId === needCheckin.id}
                 className="text-xs text-slate-400 hover:text-slate-600 underline"
               >
-                演示环境：模拟定位打卡
+                演示环境：模拟在围栏内打卡
               </button>
             </div>
           </div>
         </Card>
       )}
 
+      {toast && (
+        <div
+          className={`rounded-lg border px-4 py-3 text-sm flex items-start gap-2 ${
+            toast.ok
+              ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+              : "bg-rose-50 border-rose-200 text-rose-700"
+          }`}
+        >
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          {toast.text}
+        </div>
+      )}
+
       <Card className="p-6">
         <h2 className="font-semibold text-slate-900 mb-4">最近申请</h2>
         {loading ? (
           <div className="flex justify-center py-10">
-            <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+            <LoadingSpinner />
           </div>
         ) : leaves.length === 0 ? (
           <div className="text-center py-10 text-slate-400">
@@ -205,7 +227,8 @@ export default function StudentHome() {
                     <span className="text-xs text-slate-400">{leave.request_no}</span>
                   </div>
                   <p className="mt-2 text-sm text-slate-700 line-clamp-1">
-                    {leave.start_date} 至 {leave.end_date}（{leave.duration_days}天） · {leave.reason}
+                    {formatDateTime(leave.start_time)} 至 {formatDateTime(leave.end_time)}（
+                    {leave.duration_hours} 小时） · {leave.reason}
                   </p>
                 </div>
                 <Link

@@ -18,6 +18,14 @@ export function clearToken(): void {
   if (typeof window !== "undefined") localStorage.removeItem(TOKEN_KEY);
 }
 
+export function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = getToken();
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  };
+}
+
 export function LoadingSpinner({ size = 32 }: { size?: number }) {
   return <Loader2 className="animate-spin text-indigo-500" style={{ width: size, height: size }} />;
 }
@@ -47,11 +55,32 @@ export const LEAVE_TYPE_LABEL: Record<string, string> = {
 
 export const LEAVE_STATUS_LABEL: Record<string, string> = {
   pending: "待审批",
-  in_progress: "审批中",
+  approving: "审批中",
   approved: "已通过",
   rejected: "已驳回",
-  cancelled: "已撤销",
+  revoked: "已撤销",
 };
+
+export function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+// 输入可能是 "YYYY-MM-DDTHH:mm" 或 ISO；输出本地 "YYYY-MM-DD HH:mm"
+export function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value.length === 16 ? value.replace(" ", "T") : value);
+  if (Number.isNaN(d.getTime())) return value;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(
+    d.getHours()
+  )}:${pad2(d.getMinutes())}`;
+}
+
+export function formatDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value.length === 16 ? value.replace(" ", "T") : value);
+  if (Number.isNaN(d.getTime())) return value.slice(0, 10);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
 
 export const CHECKIN_STATUS_LABEL: Record<string, string> = {
   none: "未销假",

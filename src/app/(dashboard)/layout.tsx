@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth-context";
+import { getToken } from "@/components/shared";
 import { cn } from "@/lib/utils";
 import {
   GraduationCap,
@@ -73,16 +74,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     if (!loading && !user) router.push("/login");
-    if (user?.must_change_password) router.push("/password-change");
+    if (user?.mustChangePassword) router.push("/password-change");
   }, [loading, user, router]);
 
   const fetchMessages = async () => {
     try {
-      const res = await fetch("/api/messages", { credentials: "include" });
+      const token = getToken();
+      const res = await fetch("/api/messages", {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       if (res.ok) {
         const data = await res.json();
-        setMessages((data.data ?? []).slice(0, 10));
-        setUnread(data.unread_count ?? 0);
+        const list: MessageItem[] = data.data ?? [];
+        setMessages(list.slice(0, 10));
+        setUnread(list.filter((m) => !m.is_read).length);
+      } else if (res.status === 401) {
+        router.push("/login");
       }
     } catch {
       // ignore
@@ -99,7 +106,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [user]);
 
   const markAllRead = async () => {
-    await fetch("/api/messages/read-all", { method: "POST", credentials: "include" });
+    const token = getToken();
+    await fetch("/api/messages/read-all", {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
     setUnread(0);
     setMessages((m) => m.map((x) => ({ ...x, is_read: true })));
   };

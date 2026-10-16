@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth-context";
+import { authHeaders } from "@/components/shared";
 import { Loader2, ShieldCheck } from "lucide-react";
 
 const roleHome: Record<string, string> = {
@@ -31,13 +32,12 @@ export default function PasswordChangePage() {
     try {
       const res = await fetch("/api/auth/password", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ oldPassword, newPassword }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "修改失败");
-      if (user) setUser({ ...user, must_change_password: false });
+      if (user) setUser({ ...user, mustChangePassword: false });
       router.push(roleHome[user?.role ?? "student"] ?? "/login");
     } catch (err) {
       setError(err instanceof Error ? err.message : "修改失败");
