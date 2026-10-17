@@ -26,6 +26,18 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
   };
 }
 
+// 受控签名 URL：经后端换取临时签名地址后打开，避免把私有直链暴露给前端
+export async function openAttachment(attachmentId: string): Promise<void> {
+  const res = await fetch(`/api/files/${attachmentId}/url`, {
+    headers: authHeaders(),
+  });
+  const data = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
+  if (!res.ok || !data?.url) {
+    throw new Error(data?.error || "无法获取附件地址");
+  }
+  window.open(data.url, "_blank", "noopener,noreferrer");
+}
+
 export function LoadingSpinner({ size = 32 }: { size?: number }) {
   return <Loader2 className="animate-spin text-indigo-500" style={{ width: size, height: size }} />;
 }

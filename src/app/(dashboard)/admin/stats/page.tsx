@@ -27,20 +27,44 @@ interface StatsData {
   byClass: Record<string, number>;
   byReason: Record<string, number>;
   byDuration: Record<string, number>;
+  byDate: Record<string, number>;
+  byStatus: Record<string, number>;
   approverStats: Array<{ name: string; approved: number; rejected: number }>;
+}
+
+interface ClassRow {
+  id: string;
+  name: string;
+}
+interface TypeRow {
+  code: string;
+  name: string;
 }
 
 export default function AdminStatsPage() {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const [classes, setClasses] = useState<ClassRow[]>([]);
+  const [types, setTypes] = useState<TypeRow[]>([]);
+  const [filters, setFilters] = useState({ start: "", end: "", classId: "", leaveType: "" });
+
+  useEffect(() => {
+    fetch("/api/classes", { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then((r) => r.json())
+      .then((d) => setClasses(d.data ?? []));
+    fetch("/api/leave-types", { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then((r) => r.json())
+      .then((d) => setTypes(d.data ?? []));
+  }, []);
 
   useEffect(() => {
     const fetchStats = async () => {
       setLoading(true);
       const params = new URLSearchParams();
-      if (dateRange.start) params.set("from", dateRange.start);
-      if (dateRange.end) params.set("to", dateRange.end);
+      if (filters.start) params.set("from", filters.start);
+      if (filters.end) params.set("to", filters.end);
+      if (filters.classId) params.set("class_id", filters.classId);
+      if (filters.leaveType) params.set("leave_type", filters.leaveType);
       const res = await fetch(`/api/stats?${params.toString()}`, {
         headers: { Authorization: `Bearer ${getToken()}` },
       });
@@ -51,12 +75,14 @@ export default function AdminStatsPage() {
       setLoading(false);
     };
     void fetchStats();
-  }, [dateRange]);
+  }, [filters]);
 
   const handleExport = () => {
     const params = new URLSearchParams();
-    if (dateRange.start) params.set("from", dateRange.start);
-    if (dateRange.end) params.set("to", dateRange.end);
+    if (filters.start) params.set("startFrom", filters.start);
+    if (filters.end) params.set("startTo", filters.end);
+    if (filters.classId) params.set("classId", filters.classId);
+    if (filters.leaveType) params.set("type", filters.leaveType);
     window.open(`/api/leaves/export?${params.toString()}`, "_blank");
   };
 
@@ -99,8 +125,8 @@ export default function AdminStatsPage() {
           <label className="text-slate-600">开始日期</label>
           <input
             type="date"
-            value={dateRange.start}
-            onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+            value={filters.start}
+            onChange={(e) => setFilters({ ...filters, start: e.target.value })}
             className="border border-slate-300 rounded-lg px-3 py-2"
           />
         </div>
@@ -108,14 +134,34 @@ export default function AdminStatsPage() {
           <label className="text-slate-600">结束日期</label>
           <input
             type="date"
-            value={dateRange.end}
-            onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+            value={filters.end}
+            onChange={(e) => setFilters({ ...filters, end: e.target.value })}
             className="border border-slate-300 rounded-lg px-3 py-2"
           />
         </div>
-        {(dateRange.start || dateRange.end) && (
+        <select
+          value={filters.classId}
+          onChange={(e) => setFilters({ ...filters, classId: e.target.value })}
+          className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
+        >
+          <option value="">全部班级</option>
+          {classes.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        <select
+          value={filters.leaveType}
+          onChange={(e) => setFilters({ ...filters, leaveType: e.target.value })}
+          className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
+        >
+          <option value="">全部类型</option>
+          {types.map((t) => (
+            <option key={t.code} value={t.code}>{t.name}</option>
+          ))}
+        </select>
+        {(filters.start || filters.end || filters.classId || filters.leaveType) && (
           <button
-            onClick={() => setDateRange({ start: "", end: "" })}
+            onClick={() => setFilters({ start: "", end: "", classId: "", leaveType: "" })}
             className="text-sm text-slate-500 hover:text-slate-700"
           >
             清除筛选
@@ -134,6 +180,8 @@ export default function AdminStatsPage() {
           </div>
         ))}
       </div>
+
+      <DailyTrend byDate={stats.byDate} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl p-6 shadow-sm">
@@ -247,6 +295,40 @@ export default function AdminStatsPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function DailyTrend({ byDate }: { byDate: Record<string, number> }) {
+  const entries = Object.entries(byDate)
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .slice(-30);
+  const max = Math.max(1, ...entries.map(([, v]) => v));
+
+  return (
+    <div className="bg-white rounded-xl p-6 shadow-sm">
+      <h2 className="text-lg font-semibold mb-4">每日申请趋势（近 {entries.length} 天）</h2>
+      {entries.length === 0 ? (
+        <EmptyState text="暂无数据" />
+      ) : (
+        <div className="flex items-end gap-1 h-40 overflow-x-auto pb-2">
+          {entries.map(([day, count]) => (
+            <div key={day} className="flex flex-col items-center justify-end gap-1 min-w-[28px] h-full group">
+              <span className="text-[11px] text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                {count}
+              </span>
+              <div
+                className="w-full max-w-[24px] bg-indigo-500 rounded-t hover:bg-indigo-600 transition-colors"
+                style={{ height: `${(count / max) * 100}%`, minHeight: count > 0 ? 4 : 0 }}
+                title={`${day}：${count} 条`}
+              />
+              <span className="text-[10px] text-slate-400 whitespace-nowrap [writing-mode:vertical-rl]">
+                {day.slice(5)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

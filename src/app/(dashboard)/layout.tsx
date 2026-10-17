@@ -52,7 +52,9 @@ const navItems: Record<string, Array<{ href: string; label: string; icon: React.
     { href: "/admin/classes", label: "班级管理", icon: School },
     { href: "/admin/leaves", label: "全部请假", icon: FileText },
     { href: "/admin/stats", label: "统计报表", icon: BarChart3 },
-    { href: "/admin/settings", label: "基础配置", icon: Settings },
+    { href: "/admin/campuses", label: "校区围栏", icon: MapPin },
+    { href: "/admin/leave-types", label: "请假类型", icon: Settings },
+    { href: "/admin/flows", label: "审批流配置", icon: ClipboardCheck },
     { href: "/admin/logs", label: "操作日志", icon: History },
   ],
 };
@@ -180,7 +182,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             );
           })}
         </nav>
-        <div className="p-3 border-t border-slate-800">
+        <div className="p-3 border-t border-slate-800 space-y-1">
+          <Link
+            href="/profile"
+            className={cn(
+              "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors",
+              pathname === "/profile"
+                ? "bg-indigo-600 text-white font-medium"
+                : "text-slate-400 hover:bg-slate-800 hover:text-white"
+            )}
+          >
+            <Settings className="h-4.5 w-4.5 shrink-0" />
+            个人中心
+          </Link>
           <button
             onClick={logout}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"

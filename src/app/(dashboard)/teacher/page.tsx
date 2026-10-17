@@ -10,7 +10,10 @@ import {
   LoadingSpinner,
   EmptyState,
   getToken,
+  openAttachment,
+  formatDateTime,
 } from "@/components/shared";
+import { Paperclip, Eye } from "lucide-react";
 
 interface LeaveRow {
   id: string;
@@ -20,6 +23,7 @@ interface LeaveRow {
   end_time: string;
   duration_hours: number;
   leave_school: boolean;
+  sleep_outside: boolean;
   status: string;
   reason: string;
   destination: string | null;
@@ -63,7 +67,17 @@ export default function TeacherPending() {
     else setSelected(new Set(leaves.map((lv) => lv.id)));
   };
 
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [formError, setFormError] = useState("");
+  const detailLeave = leaves.find((lv) => lv.id === detailId) ?? null;
+
   const submit = async (id: string, action: "approved" | "rejected", batch = false) => {
+    // 单条驳回必须填写意见（需求：驳回应说明原因）
+    if (!batch && action === "rejected" && !comment.trim()) {
+      setFormError("驳回时必须填写审批意见");
+      return;
+    }
+    setFormError("");
     setSubmitting(true);
     const ids = batch ? Array.from(selected) : [id];
     const res = await fetch(batch ? "/api/leaves/batch-approve" : `/api/leaves/${id}/approve`, {
@@ -178,21 +192,54 @@ export default function TeacherPending() {
                     </td>
                     <td className="px-4 py-3">
                       {lv.files && lv.files.length > 0 ? (
-                        <span className="text-xs text-indigo-600">{lv.files.length} 个附件</span>
+                        <div className="flex flex-col gap-1">
+                          {lv.files.slice(0, 2).map((f) => (
+                            <button
+                              key={f.id}
+                              type="button"
+                              onClick={() => {
+                                void openAttachment(f.id).catch((e: unknown) =>
+                                  alert(e instanceof Error ? e.message : "打开失败")
+                                );
+                              }}
+                              className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline max-w-[140px]"
+                              title={f.file_name}
+                            >
+                              <Paperclip className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{f.file_name}</span>
+                            </button>
+                          ))}
+                          {lv.files.length > 2 && (
+                            <span className="text-[11px] text-slate-400">
+                              等 {lv.files.length} 个
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-xs text-slate-300">无</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => {
-                          setActionId(actionId === lv.id ? null : lv.id);
-                          setComment("");
-                        }}
-                        className="text-sm text-indigo-600 hover:text-indigo-800"
-                      >
-                        审批
-                      </button>
+                      <div className="inline-flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setDetailId(lv.id)}
+                          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          详情
+                        </button>
+                        <button
+                          onClick={() => {
+                            setActionId(actionId === lv.id ? null : lv.id);
+                            setComment("");
+                            setFormError("");
+                          }}
+                          className="text-sm text-indigo-600 hover:text-indigo-800"
+                        >
+                          审批
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -202,11 +249,16 @@ export default function TeacherPending() {
 
           {actionId && (
             <div className="border-t border-slate-200 bg-slate-50 p-4 space-y-3">
+              {formError && (
+                <p className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                  {formError}
+                </p>
+              )}
               <textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 rows={2}
-                placeholder="审批意见（可选，驳回时建议填写原因）"
+                placeholder="审批意见（通过可选；驳回必须填写原因）"
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
               <div className="flex justify-end gap-2">
@@ -235,6 +287,104 @@ export default function TeacherPending() {
           )}
         </Card>
       )}
+
+      {detailLeave && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-0 sm:p-4"
+          onClick={() => setDetailId(null)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white">
+              <div>
+                <h3 className="font-semibold text-slate-800">请假申请详情</h3>
+                <p className="text-xs text-slate-400 font-mono">{detailLeave.request_no}</p>
+              </div>
+              <button
+                onClick={() => setDetailId(null)}
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+            <div className="px-6 py-4 space-y-3 text-sm">
+              <DetailRow label="学生" value={`${detailLeave.student_name_snapshot}（${detailLeave.student_no_snapshot}）`} />
+              <DetailRow label="班级" value={detailLeave.class_name_snapshot ?? "-"} />
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500 w-20 shrink-0">类型</span>
+                <LeaveTypeBadge type={detailLeave.leave_type} />
+                {detailLeave.leave_school && (
+                  <span className="text-xs text-amber-600">离校{detailLeave.sleep_outside ? "·外宿" : ""}</span>
+                )}
+              </div>
+              <DetailRow
+                label="起止时间"
+                value={`${formatDateTime(detailLeave.start_time)} 至 ${formatDateTime(detailLeave.end_time)}（${detailLeave.duration_hours} 小时）`}
+              />
+              {detailLeave.destination && <DetailRow label="目的地" value={detailLeave.destination} />}
+              {detailLeave.contact_phone && <DetailRow label="紧急联系" value={detailLeave.contact_phone} />}
+              <div>
+                <p className="text-slate-500 mb-1">请假事由</p>
+                <p className="bg-slate-50 rounded-lg p-3 text-slate-700 whitespace-pre-wrap">{detailLeave.reason}</p>
+              </div>
+              <div>
+                <p className="text-slate-500 mb-1.5">证明附件</p>
+                {detailLeave.files && detailLeave.files.length > 0 ? (
+                  <div className="flex flex-col gap-1.5">
+                    {detailLeave.files.map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() =>
+                          void openAttachment(f.id).catch((e: unknown) =>
+                            alert(e instanceof Error ? e.message : "打开失败")
+                          )
+                        }
+                        className="inline-flex items-center gap-2 text-left text-sm text-indigo-600 hover:text-indigo-800 hover:underline"
+                      >
+                        <Paperclip className="h-4 w-4 shrink-0" />
+                        <span className="truncate">{f.file_name}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-slate-400 text-sm">无附件</p>
+                )}
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 sticky bottom-0 bg-white">
+              <button
+                onClick={() => setDetailId(null)}
+                className="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50"
+              >
+                关闭
+              </button>
+              <button
+                onClick={() => {
+                  setActionId(detailLeave.id);
+                  setDetailId(null);
+                  setComment("");
+                  setFormError("");
+                }}
+                className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              >
+                去审批
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-3">
+      <span className="text-slate-500 w-20 shrink-0">{label}</span>
+      <span className="text-slate-700">{value}</span>
     </div>
   );
 }

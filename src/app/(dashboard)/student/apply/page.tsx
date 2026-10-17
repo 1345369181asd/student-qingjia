@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, PageHeader, authHeaders } from "@/components/shared";
-import { Loader2 } from "lucide-react";
+import { Card, PageHeader, getToken, authHeaders } from "@/components/shared";
+import { Loader2, Paperclip, X } from "lucide-react";
 
 interface LeaveType {
   id: string;
@@ -19,6 +19,19 @@ export default function ApplyPage() {
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const ALLOWED_EXT = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".doc", ".docx"];
+  const MAX_SIZE = 10 * 1024 * 1024;
+
+  const validateFile = (f: File): string => {
+    const lower = f.name.toLowerCase();
+    const okExt = ALLOWED_EXT.some((ext) => lower.endsWith(ext));
+    if (!okExt) return "仅支持图片、PDF 或 Word 文档";
+    if (f.size > MAX_SIZE) return "文件不能超过 10MB";
+    return "";
+  };
 
   const [form, setForm] = useState({
     leaveType: "",
@@ -70,16 +83,39 @@ export default function ApplyPage() {
     ) {
       return setError(`该类型单次请假不得超过 ${selectedType.max_days_limit} 天`);
     }
+    if (selectedType?.need_proof && !file) {
+      return setError(`${selectedType.name}必须上传凭证（${selectedType.proof_desc || "证明材料"}）`);
+    }
+    if (file) {
+      const fileError = validateFile(file);
+      if (fileError) return setError(fileError);
+    }
 
     setSubmitting(true);
     try {
       const res = await fetch("/api/leaves", {
         method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify(form),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "提交失败");
+      const leaveId: string = data.data?.id;
+
+      // 创建成功后上传凭证附件
+      if (file && leaveId) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const upRes = await fetch(`/api/leaves/${leaveId}/upload`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${getToken()}` },
+          body: fd,
+        });
+        if (!upRes.ok) {
+          const upData = await upRes.json().catch(() => ({}));
+          throw new Error(`申请已提交，但凭证上传失败：${upData.error || "请稍后在记录中补传"}`);
+        }
+      }
       router.push("/student/records");
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败");
@@ -115,10 +151,66 @@ export default function ApplyPage() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              证明附件{selectedType?.need_proof ? "（必传）" : "（选填）"}
+            </label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.doc,.docx,image/*,application/pdf"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                if (f) {
+                  const msg = validateFile(f);
+                  if (msg) {
+                    setError(msg);
+                    setFile(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  } else {
+                    setError("");
+                    setFile(f);
+                  }
+                }
+              }}
+            />
+            {!file ? (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors"
+              >
+                <Paperclip className="h-4 w-4" />
+                点击上传图片 / PDF / Word（≤10MB）
+              </button>
+            ) : (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2.5">
+                <span className="flex items-center gap-2 text-sm text-slate-700 truncate">
+                  <Paperclip className="h-4 w-4 shrink-0 text-indigo-600" />
+                  <span className="truncate">{file.name}</span>
+                  <span className="text-xs text-slate-400 shrink-0">
+                    {(file.size / 1024).toFixed(0)} KB
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFile(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  className="shrink-0 text-slate-400 hover:text-rose-500"
+                  aria-label="移除附件"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
             {selectedType?.need_proof && (
               <p className="mt-1.5 text-xs text-amber-600">
-                {selectedType.name}需上传凭证（{selectedType.proof_desc || "如医院诊断证明"}
-                ），可在提交后于请假记录中补充。
+                {selectedType.name}需上传凭证：{selectedType.proof_desc || "如医院诊断证明"}
               </p>
             )}
           </div>
