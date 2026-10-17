@@ -12,6 +12,7 @@ import {
   getToken,
   openAttachment,
   formatDateTime,
+  formatDuration,
 } from "@/components/shared";
 import { Paperclip, Eye } from "lucide-react";
 
@@ -22,6 +23,7 @@ interface LeaveRow {
   start_time: string;
   end_time: string;
   duration_hours: number;
+  duration_days?: number | null;
   leave_school: boolean;
   sleep_outside: boolean;
   status: string;
@@ -185,7 +187,7 @@ export default function TeacherPending() {
                       {new Date(lv.start_time).toLocaleString("zh-CN", { hour12: false })}
                       <br />~ {new Date(lv.end_time).toLocaleString("zh-CN", { hour12: false })}
                     </td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{lv.duration_hours} 小时</td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDuration(lv)}</td>
                     <td className="px-4 py-3 text-slate-600 max-w-[220px]">
                       <p className="line-clamp-2">{lv.reason}</p>
                       {lv.destination && <p className="text-xs text-slate-400 mt-1">去向：{lv.destination}</p>}
@@ -321,7 +323,7 @@ export default function TeacherPending() {
               </div>
               <DetailRow
                 label="起止时间"
-                value={`${formatDateTime(detailLeave.start_time)} 至 ${formatDateTime(detailLeave.end_time)}（${detailLeave.duration_hours} 小时）`}
+                value={`${formatDateTime(detailLeave.start_time)} 至 ${formatDateTime(detailLeave.end_time)}（${formatDuration(detailLeave)}）`}
               />
               {detailLeave.destination && <DetailRow label="目的地" value={detailLeave.destination} />}
               {detailLeave.contact_phone && <DetailRow label="紧急联系" value={detailLeave.contact_phone} />}

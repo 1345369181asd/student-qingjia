@@ -183,46 +183,60 @@ export async function POST() {
     { code: "other", name: "其他", sort_order: 3 },
   ]);
 
-  // 审批流（演示配置）
-  // 1. 病假 <=24 小时：单级中队长
+  // 审批流（演示配置，V3.2：时长一律按 0.5 天折算后的天数匹配）
+  // 1. 离校（无论类型/天数）：中队长一级（强规则，优先级最高）
   await db.from("approval_flows").insert({
-    name: "病假一级审批（24小时内）",
-    leave_type_code: "sick",
-    min_hours: 0,
-    max_hours: 24,
+    name: "离校一级审批（中队长）",
+    leave_type_code: null,
+    min_days: 0,
+    max_days: null,
+    require_leave_school: true,
     nodes: [{ order: 0, name: "中队长审批", role: "teacher" }],
-    priority: 10,
+    priority: 50,
   });
-  // 2. 病假 >24 小时：中队长 + 管理员 两级
+  // 2. 病假超过 1 天：中队长 + 学工处两级
   await db.from("approval_flows").insert({
-    name: "病假两级审批（超过24小时）",
+    name: "病假两级审批（超过1天）",
     leave_type_code: "sick",
-    min_hours: 24.01,
-    max_hours: null,
+    min_days: 1.5,
+    max_days: null,
+    require_leave_school: false,
     nodes: [
       { order: 0, name: "中队长审批", role: "teacher" },
       { order: 1, name: "学工处审批", role: "admin" },
     ],
+    priority: 30,
+  });
+  // 3. 病假 1 天以内（含 1 天）：中队长一级
+  await db.from("approval_flows").insert({
+    name: "病假一级审批（1天以内，含1天）",
+    leave_type_code: "sick",
+    min_days: 0,
+    max_days: 1,
+    require_leave_school: false,
+    nodes: [{ order: 0, name: "中队长审批", role: "teacher" }],
     priority: 20,
   });
-  // 3. 事假：统一两级审批
+  // 4. 事假：统一两级审批
   await db.from("approval_flows").insert({
     name: "事假两级审批",
     leave_type_code: "personal",
-    min_hours: 0,
-    max_hours: null,
+    min_days: 0,
+    max_days: null,
+    require_leave_school: false,
     nodes: [
       { order: 0, name: "中队长审批", role: "teacher" },
       { order: 1, name: "学工处审批", role: "admin" },
     ],
-    priority: 5,
+    priority: 10,
   });
-  // 4. 其他/默认：中队长一级
+  // 5. 其他/默认（非离校）：中队长一级
   await db.from("approval_flows").insert({
-    name: "通用一级审批",
+    name: "通用一级审批（非离校）",
     leave_type_code: null,
-    min_hours: 0,
-    max_hours: null,
+    min_days: 0,
+    max_days: null,
+    require_leave_school: false,
     nodes: [{ order: 0, name: "中队长审批", role: "teacher" }],
     priority: 0,
   });
@@ -338,6 +352,8 @@ export async function POST() {
   for (const lv of leaves) {
     const sId = studentIds[lv.student];
     const duration = calcDurationHours(lv.start, lv.end);
+    const durationMinutes = Math.round(duration * 60);
+    const durationDays = Math.ceil(durationMinutes / 720) * 0.5;
     const snapshot = {
       S2024001: { no: "S2024001", name: "王小明", cls: "计算机2401班", dept: "信息工程系" },
       S2024002: { no: "S2024002", name: "李小红", cls: "计算机2401班", dept: "信息工程系" },
@@ -359,6 +375,9 @@ export async function POST() {
         reason: lv.reason,
         start_time: lv.start,
         end_time: lv.end,
+        duration_minutes: durationMinutes,
+        duration_days: durationDays,
+        duration_rule_version: "0.5day-v1",
         duration_hours: duration,
         leave_school: lv.leaveSchool,
         sleep_outside: false,
@@ -442,6 +461,26 @@ export async function POST() {
         leave_request_id: leaveId,
         is_todo: true,
       });
+    }
+  }
+
+  // 回填未结束请假链占用（待审/审批中，或已批准离校待销假；每个学生取最早一条）
+  {
+    const { data: actives } = await db
+      .from("leave_requests")
+      .select("id,student_id,status,checkin_status,leave_school")
+      .or("status.eq.pending,status.eq.approving,status.eq.approved");
+    const earliest = new Map<string, string>();
+    for (const row of (actives ?? []) as Array<Record<string, unknown>>) {
+      const sid = row.student_id as string;
+      const active =
+        row.status === "pending" ||
+        row.status === "approving" ||
+        (row.status === "approved" && row.leave_school === true && row.checkin_status !== "done");
+      if (active && !earliest.has(sid)) earliest.set(sid, row.id as string);
+    }
+    for (const [sid, lid] of earliest) {
+      await db.from("users").update({ active_leave_id: lid }).eq("id", sid);
     }
   }
 

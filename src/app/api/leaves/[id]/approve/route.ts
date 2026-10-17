@@ -3,6 +3,7 @@ import { getClient } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { closeAllTodos, closeTodos, createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
+import { releaseActiveLeave } from "@/lib/business";
 
 interface FlowNode {
   order: number;
@@ -123,6 +124,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       .eq("id", id)
       .in("status", ["pending", "approving"]);
     await closeAllTodos(id);
+    await releaseActiveLeave(db, lv.student_id, id);
     await createMessage({
       userId: lv.student_id,
       type: "rejected",

@@ -12,6 +12,7 @@ import {
   getToken,
   openAttachment,
   formatDateTime,
+  formatDuration,
 } from "@/components/shared";
 import { Download, Paperclip, Eye, Undo2, ShieldCheck } from "lucide-react";
 
@@ -295,7 +296,7 @@ export default function AdminLeavesPage() {
                     <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">
                       {formatDateTime(lv.start_time)}
                       <br />~ {formatDateTime(lv.end_time)}
-                      <span className="text-slate-400">（{lv.duration_hours}h）</span>
+                      <span className="text-slate-400">（{formatDuration(lv)}）</span>
                     </td>
                     <td className="px-4 py-3"><LeaveStatusBadge status={lv.status} /></td>
                     <td className="px-4 py-3"><CheckinBadge status={lv.checkin_status} /></td>
@@ -330,7 +331,7 @@ export default function AdminLeavesPage() {
             <div className="px-6 py-4 space-y-3 text-sm">
               <Row label="学生" value={`${detail.student_name_snapshot}（${detail.student_no_snapshot}）· ${detail.class_name_snapshot ?? ""}`} />
               <div className="flex items-center gap-2"><span className="text-slate-500 w-20 shrink-0">类型</span><LeaveTypeBadge type={detail.leave_type} /></div>
-              <Row label="起止时间" value={`${formatDateTime(detail.start_time)} 至 ${formatDateTime(detail.end_time)}（${detail.duration_hours} 小时）`} />
+              <Row label="起止时间" value={`${formatDateTime(detail.start_time)} 至 ${formatDateTime(detail.end_time)}（${formatDuration(detail)}）`} />
               {detail.destination && <Row label="目的地" value={`${detail.destination}${detail.sleep_outside ? " · 外宿" : ""}`} />}
               {detail.contact_phone && <Row label="紧急联系" value={detail.contact_phone} />}
               <div>

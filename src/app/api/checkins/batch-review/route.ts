@@ -4,6 +4,7 @@ import { getClient } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { closeTodos, createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
+import { releaseActiveLeave } from "@/lib/business";
 
 // 批量销假确认（逐条校验管理范围，驳回不开放批量，避免误操作）
 export async function POST(request: Request) {
@@ -91,6 +92,7 @@ export async function POST(request: Request) {
       })
       .eq("id", id);
     await closeTodos(id);
+    await releaseActiveLeave(db, lv.student_id, id);
     await createMessage({
       userId: lv.student_id,
       type: "checkin_result",

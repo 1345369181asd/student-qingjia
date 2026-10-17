@@ -68,7 +68,8 @@
 
 ### 核心领域逻辑（改动前必读）
 
-- **请假时长**：按小时计算（`duration_hours`），时间点精确到小时；多级审批流按「请假类型 + 时长区间 + 是否离校」匹配（`src/lib/business.ts` 的 `matchFlow`，先比 priority，再比类型/区间具体度）。
+- **请假时长（0.5 天计时规则，V3.2）**：起止精确到分钟，同时保存 `duration_minutes`（实际分钟）、`duration_hours`（实际小时，保留兼容）、`duration_days`（折算天数）、`duration_rule_version`（默认 `0.5day-v1`）。折算公式 `ceil(分钟/720)×0.5 天`（`src/lib/business.ts` 的 `calcDurationMinutes/minutesToDays/calcDurationDays`），审批边界严格（如 18h=1080min 计 1 天，>24h 才进 1.5 天）。审批流按「类型 + 折算天数区间(`min_days/max_days`) + 是否离校」匹配（`matchFlow` 读 snake_case 列，先比 priority 再比类型/区间/离校具体度）；`approval_flows` 的 `min_hours/max_hours` 仅为历史兼容列，不再用于匹配。
+- **一条未结束普通请假链**：`users.active_leave_id` 指向当前占用链单据；提交时先 `findActiveLeave` 预检再通过 Postgres RPC `acquire_leave_chain` 原子占用（失败回滚新单）。占用态：`pending/approving` 始终占用；`approved` 离校单销假前占用、非离校单到期(`end_time`)自然释放；`rejected/revoked/done` 不占用。释放走条件更新 `releaseActiveLeave`（仅当指向该单时清空），接入点：驳回/学生撤回/管理员撤销/销假确认/人工核验。
 - **请假编号**：`LJ-YYYYMMDD-4位随机`；提交时生成学生/班级/院系**快照字段**，后续班级调整不影响历史单据。
 - **审批状态机**：`pending → approving（中间节点通过）→ approved / rejected`；可 `revoked`（管理员撤销）。审批记录写 `approval_records`，待办写 `messages(type=approval_todo, todo_done)`。
 - **销假状态机** `checkin_status`：`none → pending（围栏外打卡/提交）→ done（中队长确认）`；围栏外可管理员 `manual-verify` 人工核验；中队长可驳回/批量确认。

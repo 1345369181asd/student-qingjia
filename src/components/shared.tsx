@@ -87,6 +87,23 @@ export function formatDateTime(value: string | null | undefined): string {
   )}:${pad2(d.getMinutes())}`;
 }
 
+// 统一时长展示：折算天数为主，括号内附实际小时数（V3.2）
+// 兼容旧数据：duration_days 缺失时由 duration_hours 现算（ceil(h*60/720)*0.5）
+export function formatDuration(row: {
+  duration_days?: number | string | null;
+  duration_hours?: number | string | null;
+}): string {
+  const hours = row.duration_hours != null ? Number(row.duration_hours) : null;
+  let days = row.duration_days != null ? Number(row.duration_days) : null;
+  if ((days == null || Number.isNaN(days)) && hours != null && !Number.isNaN(hours)) {
+    days = Math.ceil((hours * 60) / 720) * 0.5;
+  }
+  const dayText = days != null ? `${days} 天` : null;
+  const hourText = hours != null ? `${hours} 小时` : null;
+  if (dayText && hourText) return `${dayText}（${hourText}）`;
+  return dayText ?? hourText ?? "—";
+}
+
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value.length === 16 ? value.replace(" ", "T") : value);

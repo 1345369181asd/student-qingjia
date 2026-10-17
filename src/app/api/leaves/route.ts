@@ -1,7 +1,17 @@
 import { NextResponse } from "next/server";
 import { getClient } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { calcDurationHours, genRequestNo, matchFlow, resolveApproverId } from "@/lib/business";
+import {
+  DURATION_RULE_VERSION,
+  calcDurationMinutes,
+  calcDurationHours,
+  calcDurationDays,
+  genRequestNo,
+  matchFlow,
+  resolveApproverId,
+  findActiveLeave,
+  acquireActiveLeave,
+} from "@/lib/business";
 import { createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
 
@@ -224,22 +234,52 @@ export async function POST(request: Request) {
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
     return NextResponse.json({ error: "结束时间必须晚于开始时间" }, { status: 400 });
   }
-  const duration = calcDurationHours(start, end);
+  // V3.2 计时：实际分钟数 / 实际小时数（展示）/ 折算天数（审批路由与统计用）
+  const durationMinutes = calcDurationMinutes(start, end);
+  const durationHours = calcDurationHours(start, end);
+  const durationDays = calcDurationDays(start, end);
 
   const db = await getClient();
 
   // 请假类型有效
   const { data: typeRow } = await db
     .from("leave_types")
-    .select("code,name")
+    .select("code,name,max_days_limit")
     .eq("code", body.leaveType)
     .eq("is_active", true)
     .maybeSingle();
   if (!typeRow) {
     return NextResponse.json({ error: "请假类型无效或已停用" }, { status: 400 });
   }
+  const maxDaysLimit = (typeRow as { max_days_limit?: number | null }).max_days_limit ?? null;
+  if (maxDaysLimit != null && durationDays > Number(maxDaysLimit)) {
+    return NextResponse.json(
+      { error: `该类型单次请假不得超过 ${maxDaysLimit} 天（本次折算 ${durationDays} 天）` },
+      { status: 400 }
+    );
+  }
 
-  // 时间冲突校验：与本人 pending/approving/approved 且未销假的申请时间重叠
+  // 规则一：同一学生同一时刻只允许存在一条“未结束普通请假链”
+  // （待审批/审批中/已批准待销假，即使时间不重叠也拦截）
+  const active = await findActiveLeave(db, user.id);
+  if (active) {
+    const statusLabel =
+      active.status === "pending"
+        ? "待审批"
+        : active.status === "approving"
+          ? "审批中"
+          : "已批准待销假";
+    return NextResponse.json(
+      {
+        error: `您已有一条未结束的请假申请 ${active.request_no}（${statusLabel}），请等待其审批结束或完成销假后再提交`,
+        code: "ACTIVE_CHAIN_EXISTS",
+        activeLeaveId: active.id,
+      },
+      { status: 409 }
+    );
+  }
+
+  // 规则二（防御性保留）：时间重叠校验，防止并发提交穿透
   const { data: conflicts } = await db
     .from("leave_requests")
     .select("id,request_no,start_time,end_time,status,checkin_status")
@@ -262,20 +302,20 @@ export async function POST(request: Request) {
 
   const leaveSchool = body.leaveSchool ?? false;
 
-  // 匹配审批流
+  // 匹配审批流（按折算天数 + 是否离校）
   const { data: flows } = await db.from("approval_flows").select("*").eq("is_active", true);
   const flow = matchFlow(
     (flows ?? []) as Array<{
-      leaveTypeCode: string | null;
-      minHours: number | null;
-      maxHours: number | null;
-      requireLeaveSchool: boolean | null;
+      leave_type_code: string | null;
+      min_days: number | null;
+      max_days: number | null;
+      require_leave_school: boolean | null;
       priority: number | null;
       nodes: Array<unknown>;
-      isActive: boolean | null;
+      is_active: boolean | null;
     }>,
     body.leaveType,
-    duration,
+    durationDays,
     leaveSchool
   );
   if (!flow) {
@@ -339,7 +379,10 @@ export async function POST(request: Request) {
       reason: body.reason.trim(),
       start_time: start.toISOString(),
       end_time: end.toISOString(),
-      duration_hours: duration,
+      duration_minutes: durationMinutes,
+      duration_days: durationDays,
+      duration_rule_version: DURATION_RULE_VERSION,
+      duration_hours: durationHours,
       leave_school: leaveSchool,
       sleep_outside: body.sleepOutside ?? false,
       destination: body.destination?.trim() || null,
@@ -360,12 +403,30 @@ export async function POST(request: Request) {
   }
   const leaveId = (leave as { id: string }).id;
 
+  // 原子占用未结束链（并发兜底：占用失败说明刚有另一条提交成功，回滚本单）
+  const acquired = await acquireActiveLeave(db, user.id, leaveId);
+  if (!acquired) {
+    await db.from("leave_requests").delete().eq("id", leaveId).eq("student_id", user.id);
+    return NextResponse.json(
+      { error: "您已有一条未结束的请假申请，请勿重复提交", code: "ACTIVE_CHAIN_EXISTS" },
+      { status: 409 }
+    );
+  }
+
   await writeOperationLog({
     operator: user,
     action: "create_leave",
     targetType: "leave",
     targetId: leaveId,
-    detail: { requestNo, type: body.leaveType, duration, flow: (flow as unknown as { name?: string }).name ?? null },
+    detail: {
+      requestNo,
+      type: body.leaveType,
+      durationMinutes,
+      durationHours,
+      durationDays,
+      ruleVersion: DURATION_RULE_VERSION,
+      flow: (flow as unknown as { name?: string }).name ?? null,
+    },
     request,
   });
 
@@ -375,7 +436,7 @@ export async function POST(request: Request) {
     await createMessage({
       userId: todoUserId,
       type: "approval_todo",
-      title: `新的请假申请待审批：${s?.name ?? user.name}（${(typeRow as { name: string }).name}，${duration}小时）`,
+      title: `新的请假申请待审批：${s?.name ?? user.name}（${(typeRow as { name: string }).name}，计 ${durationDays} 天）`,
       content: body.reason.trim(),
       leaveRequestId: leaveId,
       isTodo: true,
@@ -398,7 +459,10 @@ export async function POST(request: Request) {
     data: {
       id: leaveId,
       requestNo,
-      durationHours: duration,
+      durationMinutes,
+      durationHours,
+      durationDays,
+      durationRuleVersion: DURATION_RULE_VERSION,
       flowName: (flow as unknown as { name?: string }).name ?? null,
       nodes: typedFlow.nodes,
     },

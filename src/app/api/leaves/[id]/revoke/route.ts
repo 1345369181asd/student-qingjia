@@ -3,6 +3,7 @@ import { getClient } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { closeAllTodos, createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
+import { releaseActiveLeave } from "@/lib/business";
 
 // 管理员撤销：可撤销审批中/已通过的申请，关闭相关待办并通知学生
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -36,6 +37,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (error) return NextResponse.json({ error: "撤销失败" }, { status: 500 });
 
   await closeAllTodos(id);
+  await releaseActiveLeave(db, lv.student_id, id);
   await createMessage({
     userId: lv.student_id,
     type: "revoked",

@@ -3,6 +3,7 @@ import { getClient } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { closeAllTodos, createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
+import { releaseActiveLeave } from "@/lib/business";
 
 // 详情：本人、负责班级中队长、管理员可见
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -106,6 +107,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   if (error) return NextResponse.json({ error: "撤销失败" }, { status: 500 });
 
   await closeAllTodos(id);
+  await releaseActiveLeave(db, lv.student_id, id);
   await createMessage({
     userId: user.id,
     type: "revoked",

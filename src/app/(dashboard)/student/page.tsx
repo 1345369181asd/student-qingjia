@@ -11,6 +11,7 @@ import {
   LoadingSpinner,
   authHeaders,
   formatDateTime,
+  formatDuration,
 } from "@/components/shared";
 import { FilePlus, MapPin, Loader2, AlertCircle } from "lucide-react";
 
@@ -22,6 +23,7 @@ interface LeaveRow {
   start_time: string;
   end_time: string;
   duration_hours: number;
+  duration_days?: number | null;
   status: string;
   checkin_status: string;
   checkin_in_fence: boolean | null;
@@ -228,7 +230,7 @@ export default function StudentHome() {
                   </div>
                   <p className="mt-2 text-sm text-slate-700 line-clamp-1">
                     {formatDateTime(leave.start_time)} 至 {formatDateTime(leave.end_time)}（
-                    {leave.duration_hours} 小时） · {leave.reason}
+                    {formatDuration(leave)}） · {leave.reason}
                   </p>
                 </div>
                 <Link

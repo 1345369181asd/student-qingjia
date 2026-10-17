@@ -14,8 +14,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   const body = (await request.json()) as {
     name?: string;
     leaveTypeCode?: string | null;
-    minHours?: number;
-    maxHours?: number | null;
+    minDays?: number;
+    maxDays?: number | null;
     requireLeaveSchool?: boolean | null;
     nodes?: Array<{ name?: string; role: "teacher" | "admin"; assigneeId?: string | null }>;
     priority?: number;
@@ -29,8 +29,18 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (body.name !== undefined) patch.name = body.name;
   if (body.leaveTypeCode !== undefined) patch.leave_type_code = body.leaveTypeCode || null;
-  if (body.minHours !== undefined) patch.min_hours = body.minHours;
-  if (body.maxHours !== undefined) patch.max_hours = body.maxHours;
+  if (body.minDays !== undefined) {
+    if (body.minDays < 0 || (body.minDays * 2) % 1 !== 0) {
+      return NextResponse.json({ error: "最短天数需为不小于 0 的 0.5 的倍数" }, { status: 400 });
+    }
+    patch.min_days = body.minDays;
+  }
+  if (body.maxDays !== undefined) {
+    if (body.maxDays != null && ((body.maxDays * 2) % 1 !== 0 || body.maxDays <= (body.minDays ?? 0))) {
+      return NextResponse.json({ error: "最长天数需为 0.5 的倍数且大于最短天数（留空表示不限）" }, { status: 400 });
+    }
+    patch.max_days = body.maxDays;
+  }
   if (body.requireLeaveSchool !== undefined) patch.require_leave_school = body.requireLeaveSchool;
   if (body.priority !== undefined) patch.priority = body.priority;
   if (body.isActive !== undefined) patch.is_active = body.isActive;

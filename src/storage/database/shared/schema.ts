@@ -62,8 +62,12 @@ export const approvalFlows = pgTable("approval_flows", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   leaveTypeCode: text("leave_type_code"), // null 表示全部类型
-  minHours: real("min_hours").default(0), // 时长下限（小时）
-  maxHours: real("max_hours"), // 时长上限（小时），null 表示无上限
+  // 时长区间（按 0.5 天折算后的天数，V3.2 规则）
+  minDays: real("min_days").default(0),
+  maxDays: real("max_days"), // null 表示无上限
+  // 旧小时字段（保留兼容，新匹配逻辑不再读取）
+  minHours: real("min_hours").default(0),
+  maxHours: real("max_hours"),
   requireLeaveSchool: boolean("require_leave_school"), // null=不限；true=仅离校；false=仅不离校
   // 节点：[{ order, name, role: 'teacher'|'admin', assigneeId? }]
   nodes: jsonb("nodes")
@@ -101,6 +105,8 @@ export const users = pgTable("users", {
   mustChangePassword: boolean("must_change_password").default(false),
   failedLoginCount: integer("failed_login_count").default(0),
   lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  // 当前占用“未结束请假链”的单据 id（V3.2：同一学生同一时刻仅允许一条未结束链）
+  activeLeaveId: uuid("active_leave_id"),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }),
@@ -127,6 +133,12 @@ export const leaveRequests = pgTable("leave_requests", {
   reason: text("reason").notNull(),
   startTime: timestamp("start_time", { withTimezone: true }).notNull(),
   endTime: timestamp("end_time", { withTimezone: true }).notNull(),
+  // 实际分钟数（由起止时间差计算，审批不修改）
+  durationMinutes: integer("duration_minutes"),
+  // 折算天数：向上取整到 0.5 天（V3.2 计时规则）
+  durationDays: real("duration_days"),
+  durationRuleVersion: text("duration_rule_version").notNull().default("0.5day-v1"),
+  // 实际小时数（展示用，兼容旧数据）；审批流匹配已改用 durationDays
   durationHours: real("duration_hours").notNull().default(0),
   leaveSchool: boolean("leave_school").default(false), // 是否离校
   sleepOutside: boolean("sleep_outside").default(false), // 是否外宿

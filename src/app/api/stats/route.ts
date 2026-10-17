@@ -9,6 +9,7 @@ type LeaveRow = {
   leave_type: string;
   status: string;
   duration_hours: number;
+  duration_days: number | null;
   reason: string;
   created_at: string;
   class_name_snapshot: string | null;
@@ -33,7 +34,7 @@ export async function GET(request: Request) {
   let q = db
     .from("leave_requests")
     .select(
-      "id,student_id,leave_type,status,duration_hours,reason,created_at,class_name_snapshot,checkin_status,is_overdue"
+      "id,student_id,leave_type,status,duration_hours,duration_days,reason,created_at,class_name_snapshot,checkin_status,is_overdue"
     );
   if (classId) {
     const { data: stuRows } = await db.from("users").select("id").eq("class_id", classId);
@@ -66,10 +67,9 @@ export async function GET(request: Request) {
   const byDate: Record<string, number> = {};
   const byReason: Record<string, number> = {};
   const byDuration: Record<string, number> = {
-    "4小时以内": 0,
-    "4-8小时": 0,
-    "8-24小时": 0,
-    "1-3天": 0,
+    "0.5天以内": 0,
+    "1天": 0,
+    "1.5-3天": 0,
     "3天以上": 0,
   };
 
@@ -86,11 +86,10 @@ export async function GET(request: Request) {
       const key = reason.length > 12 ? `${reason.slice(0, 12)}…` : reason;
       byReason[key] = (byReason[key] ?? 0) + 1;
     }
-    const h = l.duration_hours;
-    if (h <= 4) byDuration["4小时以内"] += 1;
-    else if (h <= 8) byDuration["4-8小时"] += 1;
-    else if (h <= 24) byDuration["8-24小时"] += 1;
-    else if (h <= 72) byDuration["1-3天"] += 1;
+    const d = l.duration_days ?? Math.ceil((l.duration_hours * 60) / 720) * 0.5;
+    if (d <= 0.5) byDuration["0.5天以内"] += 1;
+    else if (d <= 1) byDuration["1天"] += 1;
+    else if (d <= 3) byDuration["1.5-3天"] += 1;
     else byDuration["3天以上"] += 1;
   }
 

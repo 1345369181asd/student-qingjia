@@ -24,8 +24,8 @@ interface Flow {
   id: string;
   name: string;
   leave_type_code: string | null;
-  min_hours: number;
-  max_hours: number | null;
+  min_days: number;
+  max_days: number | null;
   require_leave_school: boolean | null;
   priority: number;
   is_active: boolean;
@@ -36,8 +36,8 @@ interface Flow {
 const emptyForm = {
   name: "",
   leave_type_code: "",
-  min_hours: "0",
-  max_hours: "",
+  min_days: "0",
+  max_days: "",
   require_leave_school: "",
   priority: "0",
   is_active: true,
@@ -102,8 +102,8 @@ export default function FlowsPage() {
     setForm({
       name: flow.name,
       leave_type_code: flow.leave_type_code ?? "",
-      min_hours: String(flow.min_hours),
-      max_hours: flow.max_hours != null ? String(flow.max_hours) : "",
+      min_days: String(flow.min_days ?? 0),
+      max_days: flow.max_days != null ? String(flow.max_days) : "",
       require_leave_school:
         flow.require_leave_school === true ? "true" : flow.require_leave_school === false ? "false" : "",
       priority: String(flow.priority ?? 0),
@@ -127,8 +127,8 @@ export default function FlowsPage() {
     const payload = {
       name: form.name.trim(),
       leaveTypeCode: form.leave_type_code || null,
-      minHours: Number(form.min_hours) || 0,
-      maxHours: form.max_hours ? Number(form.max_hours) : null,
+      minDays: Number(form.min_days) || 0,
+      maxDays: form.max_days ? Number(form.max_days) : null,
       requireLeaveSchool:
         form.require_leave_school === "true" ? true : form.require_leave_school === "false" ? false : null,
       priority: Number(form.priority) || 0,
@@ -176,7 +176,7 @@ export default function FlowsPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">审批流程配置</h1>
           <p className="text-slate-500 text-sm mt-1">
-            按「请假类型 + 时长区间 + 是否离校」匹配多级审批节点，节点驳回则流程终止
+            按「请假类型 + 折算天数区间 + 是否离校」匹配多级审批节点，时长按 0.5 天向上取整（如 18 小时计 1 天），节点驳回则流程终止
           </p>
         </div>
         <button
@@ -203,8 +203,8 @@ export default function FlowsPage() {
                     {flow.name}
                   </span>
                   <span className="text-sm text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                    {typeName(flow.leave_type_code)} · {flow.min_hours}h 以上
-                    {flow.max_hours != null ? ` ~ ${flow.max_hours}h` : "（无上限）"}
+                    {typeName(flow.leave_type_code)} · {flow.min_days ?? 0} 天以上
+                    {flow.max_days != null ? ` ~ ${flow.max_days} 天` : "（无上限）"}
                     {flow.require_leave_school != null && (flow.require_leave_school ? " · 仅离校" : " · 仅不离校")}
                   </span>
                   <span className="text-xs text-slate-400">v{flow.version}</span>
@@ -272,23 +272,24 @@ export default function FlowsPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-600 mb-1">时长下限(h)</label>
+                  <label className="block text-sm text-slate-600 mb-1">最短天数(天)</label>
                   <input
                     type="number"
-                    step="1"
+                    step="0.5"
                     min="0"
-                    value={form.min_hours}
-                    onChange={(e) => setForm({ ...form, min_hours: e.target.value })}
+                    value={form.min_days}
+                    onChange={(e) => setForm({ ...form, min_days: e.target.value })}
                     className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-slate-600 mb-1">时长上限(h)</label>
+                  <label className="block text-sm text-slate-600 mb-1">最长天数(天)</label>
                   <input
                     type="number"
-                    step="1"
-                    value={form.max_hours}
-                    onChange={(e) => setForm({ ...form, max_hours: e.target.value })}
+                    step="0.5"
+                    min="0"
+                    value={form.max_days}
+                    onChange={(e) => setForm({ ...form, max_days: e.target.value })}
                     className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
                     placeholder="不限"
                   />

@@ -65,6 +65,12 @@ export default function ApplyPage() {
     return ms > 0 ? Math.round((ms / 3_600_000) * 10) / 10 : 0;
   }, [form.startTime, form.endTime]);
 
+  // V3.2：实际分钟数按 720 分钟向上取整到 0.5 天
+  const durationDays = useMemo(() => {
+    if (durationHours <= 0) return 0;
+    return Math.ceil((durationHours * 60) / 720) * 0.5;
+  }, [durationHours]);
+
   const set = (k: keyof typeof form, v: string | boolean) =>
     setForm((f) => ({ ...f, [k]: v }));
 
@@ -77,11 +83,8 @@ export default function ApplyPage() {
     if (!form.reason.trim()) return setError("请填写请假事由");
     if (form.leaveSchool && !form.destination.trim())
       return setError("离校请假请填写目的地");
-    if (
-      selectedType?.max_days_limit &&
-      durationHours > selectedType.max_days_limit * 24
-    ) {
-      return setError(`该类型单次请假不得超过 ${selectedType.max_days_limit} 天`);
+    if (selectedType?.max_days_limit && durationDays > selectedType.max_days_limit) {
+      return setError(`该类型单次请假不得超过 ${selectedType.max_days_limit} 天（本次折算 ${durationDays} 天）`);
     }
     if (selectedType?.need_proof && !file) {
       return setError(`${selectedType.name}必须上传凭证（${selectedType.proof_desc || "证明材料"}）`);
@@ -236,7 +239,12 @@ export default function ApplyPage() {
             </div>
           </div>
           {durationHours > 0 && (
-            <p className="text-sm text-slate-500 -mt-2">请假时长：{durationHours} 小时</p>
+            <div className="-mt-2 rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2 text-sm text-slate-600">
+              实际时长 <span className="font-semibold text-slate-900">{durationHours} 小时</span>
+              <span className="mx-1.5 text-slate-300">|</span>
+              审批计假 <span className="font-semibold text-indigo-700">{durationDays} 天</span>
+              <span className="ml-1.5 text-xs text-slate-400">（按 0.5 天向上取整，仅统计审批，不改变起止时间）</span>
+            </div>
           )}
 
           <div>

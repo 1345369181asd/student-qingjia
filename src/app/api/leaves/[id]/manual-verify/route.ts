@@ -3,6 +3,7 @@ import { getClient } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { closeTodos, createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
+import { releaseActiveLeave } from "@/lib/business";
 
 // 管理员人工核验销假（特殊情况：校内定位失败但确已返校）
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -60,6 +61,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .eq("id", id);
 
   await closeTodos(id);
+  await releaseActiveLeave(db, lv.student_id, id);
   await createMessage({
     userId: lv.student_id,
     type: "checkin_result",

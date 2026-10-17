@@ -3,6 +3,7 @@ import { getClient } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { closeTodos, createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
+import { releaseActiveLeave } from "@/lib/business";
 
 // 中队长确认/驳回归校销假（驳回必填理由）
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -92,6 +93,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       })
       .eq("id", id);
     await closeTodos(id);
+    await releaseActiveLeave(db, lv.student_id, id);
     await createMessage({
       userId: lv.student_id,
       type: "checkin_result",

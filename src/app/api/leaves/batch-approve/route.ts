@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { closeTodos, closeAllTodos, createMessage } from "@/lib/notify";
 import { randomUUID } from "crypto";
 import { writeOperationLog } from "@/lib/logger";
+import { releaseActiveLeave } from "@/lib/business";
 
 interface FlowNode {
   order: number;
@@ -117,6 +118,7 @@ export async function POST(request: Request) {
         .eq("id", id)
         .in("status", ["pending", "approving"]);
       await closeAllTodos(id);
+      await releaseActiveLeave(db, lv.student_id, id);
       await createMessage({
         userId: lv.student_id,
         type: "rejected",

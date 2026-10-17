@@ -10,18 +10,134 @@ export const LEAVE_TYPE_LABEL: Record<string, string> = {
 
 export const LEAVE_STATUS_LABEL: Record<string, string> = {
   pending: "待审批",
-  in_progress: "审批中",
+  approving: "审批中",
   approved: "已通过",
   rejected: "已驳回",
-  cancelled: "已撤销",
+  revoked: "已撤销",
 };
 
-// 计算请假时长（小时，保留1位小数），按北京时间自然时间差
-export function calcDurationHours(start: Date | string, end: Date | string): number {
+export const DURATION_RULE_VERSION = "0.5day-v1";
+
+// 实际时长（分钟）：end - start，按自然时间差，由起止时间决定，审批不修改
+export function calcDurationMinutes(
+  start: Date | string,
+  end: Date | string
+): number {
   const s = new Date(start).getTime();
   const e = new Date(end).getTime();
   if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 0;
-  return Math.round(((e - s) / 3600000) * 10) / 10;
+  return Math.round((e - s) / 60000);
+}
+
+// 实际时长（小时，保留1位小数，仅展示用）
+export function calcDurationHours(start: Date | string, end: Date | string): number {
+  const mins = calcDurationMinutes(start, end);
+  return Math.round((mins / 60) * 10) / 10;
+}
+
+// 折算天数：向上取整到 0.5 天（V3.2：ceil(实际分钟 / 720) * 0.5）
+// 例：18 小时=1080 分钟 -> ceil(1.5)=2 -> 1 天；25 小时 -> 2 天
+export function calcDurationDays(start: Date | string, end: Date | string): number {
+  return minutesToDays(calcDurationMinutes(start, end));
+}
+
+export function minutesToDays(minutes: number): number {
+  return Math.ceil(minutes / 720) * 0.5;
+}
+
+// 判断一条请假是否“未结束”（占用请假链）：
+// - 待审批/审批中：始终占用
+// - 已批准：离校类完成销假前一直占用；非离校类到期自然结束（以 now 对账）
+// - 已驳回/已撤销/已完成销假：不占用
+export function isLeaveActive(
+  leave: {
+    status: string;
+    checkin_status?: string | null;
+    leave_school?: boolean | null;
+    end_time?: string | null;
+  },
+  now: Date = new Date()
+): boolean {
+  if (leave.status === "pending" || leave.status === "approving") return true;
+  if (leave.status === "approved") {
+    if (leave.checkin_status === "done") return false;
+    if (leave.leave_school) return true; // 离校：销假前始终占用（含逾期未销假）
+    return !!leave.end_time && new Date(leave.end_time).getTime() > now.getTime();
+  }
+  return false;
+}
+
+type DbClient = Awaited<ReturnType<typeof import("@/lib/db").getClient>>;
+
+// 查询学生当前占用未结束链的单据（非离校到期自动对账释放）
+export async function findActiveLeave(
+  db: DbClient,
+  studentId: string
+): Promise<{ id: string; request_no: string; status: string } | null> {
+  const { data: user } = await db
+    .from("users")
+    .select("active_leave_id")
+    .eq("id", studentId)
+    .maybeSingle();
+  const activeId = (user as { active_leave_id: string | null } | null)?.active_leave_id ?? null;
+  if (!activeId) return null;
+  const { data: leave } = await db
+    .from("leave_requests")
+    .select("id,request_no,status,checkin_status,leave_school,end_time")
+    .eq("id", activeId)
+    .maybeSingle();
+  if (!leave) {
+    await releaseActiveLeave(db, studentId, activeId);
+    return null;
+  }
+  const lv = leave as {
+    id: string;
+    request_no: string;
+    status: string;
+    checkin_status: string | null;
+    leave_school: boolean | null;
+    end_time: string | null;
+  };
+  if (!isLeaveActive(lv)) {
+    await releaseActiveLeave(db, studentId, lv.id);
+    return null;
+  }
+  return { id: lv.id, request_no: lv.request_no, status: lv.status };
+}
+
+// 仅当占用的就是该单据时清空，避免误释放新单
+export async function releaseActiveLeave(db: DbClient, studentId: string, leaveId: string): Promise<void> {
+  await db
+    .from("users")
+    .update({ active_leave_id: null })
+    .eq("id", studentId)
+    .eq("active_leave_id", leaveId);
+}
+
+// 原子占用：仅在学生当前无占用时成功，防止并发重复提交
+export async function acquireActiveLeave(
+  db: DbClient,
+  studentId: string,
+  leaveId: string
+): Promise<boolean> {
+  const { data, error } = await db
+    .rpc("acquire_leave_chain", { p_student: studentId, p_leave: leaveId })
+    .maybeSingle();
+  if (!error) {
+    // PostgREST 对返回 jsonb 标量的函数可能包一层以函数名命名的键
+    const raw = data as
+      | { ok?: boolean; acquire_leave_chain?: { ok?: boolean } }
+      | null;
+    const payload: { ok?: boolean } | null = raw?.acquire_leave_chain ?? raw;
+    return Boolean(payload?.ok);
+  }
+  // 兜底：RPC 不存在时退化为条件更新（低并发演示场景可接受）
+  const { error: upErr } = await db
+    .from("users")
+    .update({ active_leave_id: leaveId })
+    .eq("id", studentId)
+    .is("active_leave_id", null);
+  return !upErr;
 }
 
 // 生成申请编号：LJ-YYYYMMDD-XXXX（当日随机序号，唯一性由数据库 unique 再兜底）
@@ -150,46 +266,46 @@ export async function resolveApproverId(
   return null;
 }
 
-// 根据请假类型与时长匹配审批流（优先级：条件最具体 + priority 高者）
+// 根据请假类型 + 折算天数 + 是否离校匹配审批流（priority 主权重，条件更具体者优先）
 export function matchFlow<T extends {
-  leaveTypeCode: string | null;
-  minHours: number | null;
-  maxHours: number | null;
-  requireLeaveSchool: boolean | null;
+  leave_type_code: string | null;
+  min_days?: number | null;
+  max_days?: number | null;
+  require_leave_school: boolean | null;
   priority: number | null;
   nodes: Array<unknown>;
-  isActive: boolean | null;
+  is_active: boolean | null;
 }>(
   flows: T[],
   leaveType: string,
-  durationHours: number,
+  durationDays: number,
   leaveSchool: boolean
 ): T | null {
   const matched = flows.filter((f) => {
-    if (f.isActive === false) return false;
-    if (f.leaveTypeCode && f.leaveTypeCode !== leaveType) return false;
-    if ((f.minHours ?? 0) > durationHours) return false;
-    if (f.maxHours != null && durationHours > f.maxHours) return false;
-    if (f.requireLeaveSchool != null && f.requireLeaveSchool !== leaveSchool) return false;
+    if (f.is_active === false) return false;
+    if (f.leave_type_code && f.leave_type_code !== leaveType) return false;
+    if ((f.min_days ?? 0) > durationDays) return false;
+    if (f.max_days != null && durationDays > f.max_days) return false;
+    if (f.require_leave_school != null && f.require_leave_school !== leaveSchool) return false;
     return Array.isArray(f.nodes) && f.nodes.length > 0;
   });
   matched.sort((a, b) => {
     // 排序优先级（逐位比较，前者决定）：
-    // 1) priority（流程配置主权重）
+    // 1) priority（流程配置主权重，离校/长假等强规则配置更高优先级）
     // 2) 限定请假类型 > 全类型
-    // 3) 同时长类型下时长区间更窄（上限更小 / 下限更大）更具体
+    // 3) 时长区间更窄（上限更小 / 下限更大）更具体
     // 4) 是否限定离校
     const pa = a.priority ?? 0;
     const pb = b.priority ?? 0;
     if (pb !== pa) return pb - pa;
-    const typeA = a.leaveTypeCode ? 1 : 0;
-    const typeB = b.leaveTypeCode ? 1 : 0;
+    const typeA = a.leave_type_code ? 1 : 0;
+    const typeB = b.leave_type_code ? 1 : 0;
     if (typeB !== typeA) return typeB - typeA;
-    const widthA = (a.maxHours ?? Number.MAX_SAFE_INTEGER) - (a.minHours ?? 0);
-    const widthB = (b.maxHours ?? Number.MAX_SAFE_INTEGER) - (b.minHours ?? 0);
+    const widthA = (a.max_days ?? Number.MAX_SAFE_INTEGER) - (a.min_days ?? 0);
+    const widthB = (b.max_days ?? Number.MAX_SAFE_INTEGER) - (b.min_days ?? 0);
     if (widthA !== widthB) return widthA - widthB;
-    const lsA = a.requireLeaveSchool != null ? 1 : 0;
-    const lsB = b.requireLeaveSchool != null ? 1 : 0;
+    const lsA = a.require_leave_school != null ? 1 : 0;
+    const lsB = b.require_leave_school != null ? 1 : 0;
     return lsB - lsA;
   });
   return matched[0] ?? null;

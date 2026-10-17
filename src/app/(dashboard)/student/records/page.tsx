@@ -11,6 +11,7 @@ import {
   EmptyState,
   authHeaders,
   formatDateTime,
+  formatDuration,
 } from "@/components/shared";
 import { MapPin, XCircle, ChevronDown, ChevronUp, FileText, ShieldQuestion } from "lucide-react";
 
@@ -150,7 +151,7 @@ export default function StudentRecords() {
                     </div>
                     <p className="mt-2 text-sm text-slate-700">
                       {formatDateTime(leave.start_time)} ~ {formatDateTime(leave.end_time)}（
-                      {leave.duration_hours} 小时）
+                      {formatDuration(leave)}）
                     </p>
                     <p className="mt-1 text-sm text-slate-500 line-clamp-1">{leave.reason}</p>
                   </div>
