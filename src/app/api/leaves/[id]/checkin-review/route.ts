@@ -4,13 +4,20 @@ import { requireAuth } from "@/lib/auth";
 import { closeTodos, createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
 import { releaseActiveLeave } from "@/lib/business";
+import { isEligibleApprover } from "@/lib/scope";
 
-// 中队长确认/驳回归校销假（驳回必填理由）
+// 中队长/大队长确认或驳回归校销假（驳回必填理由）；管理员/学工处也可处理
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireAuth(request);
   if (user instanceof Response) return user;
-  if (user.role !== "teacher") {
-    return NextResponse.json({ error: "仅中队长可确认销假" }, { status: 403 });
+  const db = await getClient();
+  const canReview =
+    user.roles.includes("teacher") ||
+    user.roles.includes("head_teacher") ||
+    user.roles.includes("admin") ||
+    user.roles.includes("affair");
+  if (!canReview) {
+    return NextResponse.json({ error: "无销假确认权限" }, { status: 403 });
   }
   const { id } = await params;
   const body = (await request.json()) as {
@@ -24,7 +31,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "驳回必须填写理由" }, { status: 400 });
   }
 
-  const db = await getClient();
   const { data: leave } = await db.from("leave_requests").select("*").eq("id", id).maybeSingle();
   if (!leave) return NextResponse.json({ error: "申请不存在" }, { status: 404 });
   const lv = leave as {
@@ -41,21 +47,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "当前没有待确认的销假申请" }, { status: 400 });
   }
 
-  // 管理范围校验
+  // 管理范围校验：管理员/学工处全校；中队长按所带班级；大队长按名下中队长覆盖班级
   const { data: student } = await db
     .from("users")
-    .select("class_id")
+    .select("class_id, department_id")
     .eq("id", lv.student_id)
     .maybeSingle();
-  const classId = (student as { class_id: string | null } | null)?.class_id;
-  if (!classId) return NextResponse.json({ error: "学生班级缺失" }, { status: 422 });
-  const { data: cls } = await db
-    .from("classes")
-    .select("id")
-    .eq("id", classId)
-    .eq("leader_id", user.id)
-    .maybeSingle();
-  if (!cls) return NextResponse.json({ error: "不在您的管理范围内" }, { status: 403 });
+  const studentRef = student as { class_id: string | null; department_id: string | null } | null;
+  if (!studentRef?.class_id) {
+    return NextResponse.json({ error: "学生班级缺失" }, { status: 422 });
+  }
+  const hasFullScope = user.roles.includes("admin") || user.roles.includes("affair");
+  const inScope =
+    hasFullScope ||
+    (await isEligibleApprover(db, "teacher", user.id, user.roles, studentRef)) ||
+    (await isEligibleApprover(db, "head_teacher", user.id, user.roles, studentRef));
+  if (!inScope) return NextResponse.json({ error: "不在您的管理范围内" }, { status: 403 });
 
   // 取最新一条待确认打卡
   const { data: pendingCheckin } = await db

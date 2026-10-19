@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   const { data: user } = await db
     .from("users")
     .select(
-      "id,username,name,role,class_id,campus_id,student_no,grade,major,department,student_status,email,phone,is_active,must_change_password"
+      "id,username,name,role,class_id,campus_id,student_no,grade,major,department,major_id,department_id,student_status,email,phone,is_active,must_change_password"
     )
     .eq("id", payload.id)
     .maybeSingle();
@@ -28,6 +28,13 @@ export async function GET(request: Request) {
   if (u.is_active === false) {
     return NextResponse.json({ error: "账号已停用" }, { status: 403 });
   }
+
+  const { data: roleRows } = await db
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", payload.id);
+  const roles = (roleRows ?? []).map((r) => (r as { role: string }).role);
+  const finalRoles = roles.length > 0 ? roles : [u.role as string];
 
   // 未读消息与待办数量
   const { count: unreadCount } = await db
@@ -48,12 +55,15 @@ export async function GET(request: Request) {
       username: u.username,
       name: u.name,
       role: u.role,
+      roles: finalRoles,
       classId: u.class_id,
       campusId: u.campus_id,
       studentNo: u.student_no,
       grade: u.grade,
       major: u.major,
       department: u.department,
+      majorId: u.major_id,
+      departmentId: u.department_id,
       studentStatus: u.student_status,
       email: u.email,
       phone: u.phone,

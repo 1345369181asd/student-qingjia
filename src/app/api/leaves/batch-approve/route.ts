@@ -5,11 +5,12 @@ import { closeTodos, closeAllTodos, createMessage } from "@/lib/notify";
 import { randomUUID } from "crypto";
 import { writeOperationLog } from "@/lib/logger";
 import { releaseActiveLeave } from "@/lib/business";
+import { isEligibleApprover, resolveApproverIds } from "@/lib/scope";
 
 interface FlowNode {
   order: number;
   name: string;
-  role: "teacher" | "admin";
+  role: string;
   assigneeId?: string | null;
 }
 
@@ -61,29 +62,26 @@ export async function POST(request: Request) {
       continue;
     }
 
-    // 审批人权限校验
-    let allowed = false;
-    if (node.assigneeId) {
-      allowed = node.assigneeId === user.id;
-    } else if (node.role === "admin") {
-      allowed = user.role === "admin";
-    } else {
-      const { data: student } = await db
-        .from("users")
-        .select("class_id")
-        .eq("id", lv.student_id)
-        .maybeSingle();
-      const classId = (student as { class_id: string | null } | null)?.class_id;
-      if (classId && user.role === "teacher") {
-        const { data: cls } = await db
-          .from("classes")
-          .select("id")
-          .eq("id", classId)
-          .eq("leader_id", user.id)
-          .maybeSingle();
-        allowed = !!cls;
-      }
+    // 审批人权限校验：指定人员或当前管理关系下的合格审批人；禁止自审
+    if (lv.student_id === user.id) {
+      results.push({ id, requestNo: lv.request_no, ok: false, reason: "不能审批自己的申请" });
+      continue;
     }
+    const { data: studentRow } = await db
+      .from("users")
+      .select("class_id, department_id")
+      .eq("id", lv.student_id)
+      .maybeSingle();
+    const studentRef = studentRow as { class_id: string | null; department_id: string | null } | null;
+    const allowed = node.assigneeId
+      ? node.assigneeId === user.id
+      : await isEligibleApprover(
+          db,
+          node.role,
+          user.id,
+          user.roles,
+          studentRef ?? { class_id: null, department_id: null },
+        );
     if (!allowed) {
       results.push({ id, requestNo: lv.request_no, ok: false, reason: "非当前节点审批人" });
       continue;
@@ -160,6 +158,41 @@ export async function POST(request: Request) {
           title: `请假申请已通过「${node.name}」，等待「${nextNode.name}」`,
           leaveRequestId: id,
         });
+        // 下一节点合格审批人群发待办；无合格人则异常待办给全部管理员
+        const nextIds = nextNode.assigneeId
+          ? [nextNode.assigneeId]
+          : await resolveApproverIds(
+              db,
+              nextNode.role,
+              studentRef ?? { class_id: null, department_id: null },
+            );
+        if (nextIds.length > 0) {
+          for (const uid of nextIds) {
+            await createMessage({
+              userId: uid,
+              type: "approval_todo",
+              title: `请假申请待「${nextNode.name}」审批`,
+              content: lv.request_no,
+              leaveRequestId: id,
+              isTodo: true,
+            });
+          }
+        } else {
+          const { data: admins } = await db
+            .from("user_roles")
+            .select("user_id")
+            .eq("role", "admin");
+          for (const a of admins ?? []) {
+            await createMessage({
+              userId: a.user_id as string,
+              type: "abnormal",
+              title: `异常待办：${lv.request_no} 下一节点「${nextNode.name}」无有效审批人`,
+              content: "请检查学生调班后的管理关系或流程节点配置",
+              leaveRequestId: id,
+              isTodo: true,
+            });
+          }
+        }
       }
     }
 

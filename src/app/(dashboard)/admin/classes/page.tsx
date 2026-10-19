@@ -10,6 +10,9 @@ interface ClassItem {
   grade: string | null;
   description: string | null;
   leader_id: string | null;
+  major_id?: string | null;
+  department_name?: string | null;
+  major_name?: string | null;
   leader?: { name: string } | null;
 }
 interface Teacher {
@@ -17,24 +20,39 @@ interface Teacher {
   username: string;
   name: string;
 }
+interface MajorItem {
+  id: string;
+  name: string;
+  department_id: string;
+  department?: { name: string } | null;
+}
 
 export default function AdminClasses() {
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [majors, setMajors] = useState<MajorItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ClassItem | null>(null);
-  const [form, setForm] = useState({ name: "", grade: "", description: "", leader_id: "" });
+  const [form, setForm] = useState({
+    name: "",
+    grade: "",
+    description: "",
+    leader_id: "",
+    majorId: "",
+  });
   const [error, setError] = useState("");
 
   const load = async () => {
     setLoading(true);
-    const [c, t] = await Promise.all([
+    const [c, t, m] = await Promise.all([
       fetch("/api/classes?withLeader=true", { headers: authHeaders() }).then((r) => r.json()),
       fetch("/api/users?role=teacher", { headers: authHeaders() }).then((r) => r.json()),
+      fetch("/api/majors", { headers: authHeaders() }).then((r) => r.json()),
     ]);
     setClasses(c.data ?? []);
     setTeachers(t.data ?? []);
+    setMajors(m.data ?? []);
     setLoading(false);
   };
   useEffect(() => {
@@ -49,6 +67,7 @@ export default function AdminClasses() {
       grade: form.grade || null,
       description: form.description || null,
       leader_id: form.leader_id || null,
+      major_id: form.majorId || null,
     };
     const res = await fetch(editing ? `/api/classes/${editing.id}` : "/api/classes", {
       method: editing ? "PUT" : "POST",
@@ -79,7 +98,7 @@ export default function AdminClasses() {
           <button
             onClick={() => {
               setEditing(null);
-              setForm({ name: "", grade: "", description: "", leader_id: "" });
+              setForm({ name: "", grade: "", description: "", leader_id: "", majorId: "" });
               setError("");
               setShowForm(true);
             }}
@@ -101,6 +120,7 @@ export default function AdminClasses() {
               <thead>
                 <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
                   <th className="px-3 py-2 font-medium">班级名称</th>
+                  <th className="px-3 py-2 font-medium">系部 / 专业</th>
                   <th className="px-3 py-2 font-medium">年级</th>
                   <th className="px-3 py-2 font-medium">中队长</th>
                   <th className="px-3 py-2 font-medium">备注</th>
@@ -111,6 +131,12 @@ export default function AdminClasses() {
                 {classes.map((c) => (
                   <tr key={c.id} className="hover:bg-slate-50">
                     <td className="px-3 py-2.5 font-medium text-slate-800">{c.name}</td>
+                    <td className="px-3 py-2.5 text-slate-600">
+                      <div className="text-xs leading-5">
+                        <div>{c.department_name ?? "-"}</div>
+                        <div className="text-slate-400">{c.major_name ?? "-"}</div>
+                      </div>
+                    </td>
                     <td className="px-3 py-2.5 text-slate-600">{c.grade ?? "-"}</td>
                     <td className="px-3 py-2.5">
                       {c.leader?.name ? (
@@ -132,6 +158,7 @@ export default function AdminClasses() {
                               grade: c.grade ?? "",
                               description: c.description ?? "",
                               leader_id: c.leader_id ?? "",
+                              majorId: c.major_id ?? "",
                             });
                             setError("");
                             setShowForm(true);
@@ -171,10 +198,27 @@ export default function AdminClasses() {
                 />
               </div>
               <div>
+                <label className="text-xs text-slate-500">所属专业（自动归属系部）</label>
+                <select
+                  value={form.majorId}
+                  onChange={(e) => setForm({ ...form, majorId: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">未分配专业</option>
+                  {majors.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.department?.name ? `${m.department.name} · ` : ""}
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="text-xs text-slate-500">年级</label>
                 <input
                   value={form.grade}
                   onChange={(e) => setForm({ ...form, grade: e.target.value })}
+                  placeholder="如 2024级"
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>

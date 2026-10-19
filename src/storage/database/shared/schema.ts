@@ -14,12 +14,38 @@ import { relations, sql } from "drizzle-orm";
 // 组织结构：班级 / 校区 / 请假类型 / 审批流程配置
 // ============================================================
 
+// ============================================================
+// 组织树：系部 -> 专业 -> 年级/班级（AC-31）
+// ============================================================
+
+export const departments = pgTable("departments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
+});
+
+export const majors = pgTable("majors", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  // 每个有效专业同一时间唯一归属一个系部（数据库外键 + 唯一业务编码保障）
+  departmentId: uuid("department_id").notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
+});
+
 export const classes = pgTable("classes", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   grade: text("grade"),
-  major: text("major"), // 专业
-  department: text("department"), // 院系 / 大队 / 系部
+  majorId: uuid("major_id"), // 所属专业（组织树外键）
+  departmentId: uuid("department_id"), // 冗余系部，随专业归属同步
+  major: text("major"), // 兼容历史快照文本
+  department: text("department"), // 兼容历史快照文本
   leaderId: uuid("leader_id"), // 负责中队长（users.id，逻辑关联，避免迁移环）
   campusId: uuid("campus_id"), // 所属校区
   description: text("description"),
@@ -95,7 +121,9 @@ export const users = pgTable("users", {
   campusId: uuid("campus_id"),
   studentNo: text("student_no"), // 学号（学生）
   grade: text("grade"),
+  majorId: uuid("major_id"), // 所属专业（组织树）
   major: text("major"),
+  departmentId: uuid("department_id"), // 所属系部（组织树，随专业解析）
   department: text("department"),
   // 学籍状态：enrolled 在读 / suspended 休学 / graduated 毕业
   studentStatus: text("student_status").default("enrolled"),
@@ -127,6 +155,9 @@ export const leaveRequests = pgTable("leave_requests", {
   studentNameSnapshot: text("student_name_snapshot"),
   classNameSnapshot: text("class_name_snapshot"),
   departmentSnapshot: text("department_snapshot"),
+  majorNameSnapshot: text("major_name_snapshot"),
+  majorIdSnapshot: uuid("major_id_snapshot"),
+  gradeSnapshot: text("grade_snapshot"),
 
   leaveType: text("leave_type").notNull(), // 对应 leave_types.code
   leaveTypeName: text("leave_type_name"),
@@ -275,6 +306,77 @@ export const operationLogs = pgTable("operation_logs", {
   targetId: text("target_id"),
   detail: jsonb("detail").$type<Record<string, unknown>>(),
   ipAddress: text("ip_address"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================================
+// 多角色 与 人员管理关系（AC-31 / 5.2）
+// 组织树与人员授权关系分离：中队长-班级 / 大队长-中队长 / 院领导-系部
+// ============================================================
+
+export type AppRoleCode =
+  | "student"
+  | "teacher"
+  | "head_teacher"
+  | "affair"
+  | "college_leader"
+  | "admin";
+
+export const userRoles = pgTable("user_roles", {
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  role: text("role").$type<AppRoleCode>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ pk: sql`PRIMARY KEY (${t.userId}, ${t.role})` }));
+
+// 中队长 -> 负责班级
+export const relTeacherClasses = pgTable("rel_teacher_classes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  teacherId: uuid("teacher_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  classId: uuid("class_id")
+    .notNull()
+    .references(() => classes.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ uniq: sql`UNIQUE (${t.teacherId}, ${t.classId})` }));
+
+// 大队长 -> 管理的中队长
+export const relHeadTeachers = pgTable("rel_head_teachers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  headTeacherId: uuid("head_teacher_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  teacherId: uuid("teacher_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ uniq: sql`UNIQUE (${t.headTeacherId}, ${t.teacherId})` }));
+
+// 分管院领导 -> 负责系部
+export const relLeaderDepartments = pgTable("rel_leader_departments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  leaderId: uuid("leader_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  departmentId: uuid("department_id")
+    .notNull()
+    .references(() => departments.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ uniq: sql`UNIQUE (${t.leaderId}, ${t.departmentId})` }));
+
+// 组织归属 / 管理关系变更留痕（调班、换负责人、专业转系等）
+export const managementChanges = pgTable("management_changes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  changeType: text("change_type").notNull(), // student_transfer / teacher_scope / head_scope / leader_scope / major_reparent
+  targetType: text("target_type"),
+  targetId: uuid("target_id"),
+  operatorId: uuid("operator_id"),
+  operatorName: text("operator_name"),
+  beforeValue: jsonb("before_value").$type<Record<string, unknown>>(),
+  afterValue: jsonb("after_value").$type<Record<string, unknown>>(),
+  reason: text("reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

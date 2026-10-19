@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { closeAllTodos, createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
 import { releaseActiveLeave } from "@/lib/business";
+import { resolveScope } from "@/lib/scope";
 
 // 详情：本人、负责班级中队长、管理员可见
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -16,20 +17,31 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!leave) return NextResponse.json({ error: "申请不存在" }, { status: 404 });
   const lv = leave as Record<string, unknown>;
 
-  if (user.role === "student" && lv.student_id !== user.id) {
+  const isStudentOnly = user.roles.length === 1 && user.roles[0] === "student";
+  if (isStudentOnly && lv.student_id !== user.id) {
     return NextResponse.json({ error: "无权查看" }, { status: 403 });
   }
-  if (user.role === "teacher") {
-    const { data: cls } = await db
-      .from("classes")
-      .select("id")
-      .eq("leader_id", user.id)
-      .eq("is_active", true);
-    const classIds = new Set((cls ?? []).map((c) => c.id as string));
-    const { data: stu } = await db.from("users").select("class_id").eq("id", lv.student_id).maybeSingle();
-    const studentClassId = (stu as { class_id: string | null } | null)?.class_id;
-    if (!studentClassId || !classIds.has(studentClassId)) {
-      return NextResponse.json({ error: "无权查看" }, { status: 403 });
+  const isManager = user.roles.some((r) =>
+    ["admin", "affair", "teacher", "head_teacher", "college_leader"].includes(r),
+  );
+  if (!isStudentOnly && !isManager) {
+    return NextResponse.json({ error: "无权查看" }, { status: 403 });
+  }
+  if (!isStudentOnly) {
+    // 按数据范围校验：管理员/学工处全校，其余按 resolveScope 覆盖班级/系部
+    const scope = await resolveScope(db, user);
+    const { data: stu } = await db
+      .from("users")
+      .select("class_id, department_id")
+      .eq("id", lv.student_id)
+      .maybeSingle();
+    const ref = stu as { class_id: string | null; department_id: string | null } | null;
+    if (!scope.all && ref) {
+      const inClass = ref.class_id && scope.classIds.includes(ref.class_id);
+      const inDept = ref.department_id && scope.departmentIds.includes(ref.department_id);
+      if (!inClass && !inDept) {
+        return NextResponse.json({ error: "无权查看" }, { status: 403 });
+      }
     }
   }
 
@@ -73,7 +85,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireAuth(request);
   if (user instanceof Response) return user;
-  if (user.role !== "student") {
+  if (!user.roles.includes("student")) {
     return NextResponse.json({ error: "仅学生可以撤销本人申请" }, { status: 403 });
   }
   const { id } = await params;

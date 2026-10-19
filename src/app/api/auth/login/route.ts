@@ -98,7 +98,8 @@ export async function POST(request: Request) {
   });
 
   await writeOperationLog({
-    operator: payload,
+    operatorId: u.id,
+    operatorName: u.name,
     action: "login_success",
     targetType: "user",
     targetId: u.id,

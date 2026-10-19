@@ -76,6 +76,12 @@
 - **围栏判定以后端为准**（`checkFence`：圆/多边形 + 边界容差 + 精度上限），前端定位仅作采集，前端判断不能替代服务端。
 - **认证**：不开放学生自注册（`/api/auth/register` 直接拒绝）；导入学生强制改密；登录失败 5 次锁定 15 分钟；管理员可重置密码。
 - **超时/逾期**：不跑定时任务，由管理员在统计页手动 POST `/api/admin/scan-alerts` 扫描生成预警消息。
+- **组织树（V3.2 AC-31）**：`departments(系部) → majors(专业,唯一归属系部) → classes(班级,带 grade/major_id/department_id 冗余) → users(学生)`。专业唯一归属系部；转专业(`PUT /api/majors/[id]`)支持 `?previewReparent=` 影响预览（受影响班级/学生/未处理单/新旧院领导），提交后级联更新 classes/users 冗余字段并写 `management_changes(major_reparent)`。被引用记录只停用不物理删除。
+- **六角色多角色体系**：`student/teacher(中队长)/head_teacher(大队长)/affair(学工处)/college_leader(分管院领导)/admin`。`user_roles(user_id,role)` 支撑一人多角色；JWT 仍存单主 `role`（兼容），`requireAuth` 每次实时加载 `roles[]`（user_roles 为空回退 `[users.role]`），前端/权限一律用 `roles[]`（`hasRole/hasAnyRole`），勿信旧会话快照。
+- **人员授权关系与组织归属分离**：管理范围走独立关系表，不靠角色名推定——`rel_teacher_classes(teacher_id,class_id)`、`rel_head_teachers(head_teacher_id,teacher_id)`、`rel_leader_departments(leader_id,department_id)`，经 `/api/management-relations?type=` 维护（校验管理者角色、防循环管理、幂等、写 management_changes）。
+- **数据范围（`src/lib/scope.ts`，所有函数首参 db）**：`resolveScope(db,user)`：admin/affair=全校 all；teacher 取所负责班级 classIds；head_teacher 取名下中队长所管班级并集 + managedTeacherIds；college_leader 取所分管系部 departmentIds。`canAccessStudent` 判定单生可见；leaves 列表/详情/待办/销假确认均按 scope 过滤。
+- **审批人解析与资格**：节点 `role` 为 6 角色字符串，可选 `assigneeId` 指定专人。`resolveApproverIds(db,nodeRole,{classId,departmentId})` 按管理关系解析合格审批人（teacher→班级负责人；head_teacher→二级解析；college_leader→系部分管领导；affair/admin→user_roles 全员）；任一合格人处理即可（不会签）；**无合格审批人→给全部 admin 发 `abnormal` 异常待办，绝不自动通过/跳过**。审批用 `isEligibleApprover` 判定资格且**禁止自审**(403)。
+- **自动交接（`src/lib/handoff.ts`）**：调班(`handoffByStudentClassChange`)、负责人关系变更(`handoffByRelationChange`)、转系(`handoffByMajorReparent`) 时，关闭相关在途单的旧待办并给新审批人生成待办（异常则发 admin），写 `management_changes`，不改动审批记录。
 
 ### 功能模块
 
@@ -86,17 +92,20 @@
 
 ### 数据库表（Supabase Postgres，均开启 RLS）
 
-`users` `classes` `campuses` `leave_types` `approval_flows(nodes 为 jsonb 数组)` `leave_requests`(含快照/销假/预警字段) `approval_records` `checkins` `attachments`(对象存储 file_key) `messages`(待办+通知合一) `alert_rules`(单行配置) `alert_records` `operation_logs`(只追加)
+`users`(含 class_id/major_id/department_id/grade/active_leave_id) `departments` `majors` `classes`(冗余 major_id/department_id/grade) `campuses` `leave_types` `approval_flows(nodes 为 jsonb 数组，节点 role 为 6 角色，可选 assigneeId) `user_roles`(多角色,复合PK) `rel_teacher_classes` `rel_head_teachers` `rel_leader_departments` `management_changes`(调班/换负责人/转系留痕) `leave_requests`(含组织快照 major_id_snapshot/major_name_snapshot/grade_snapshot/department_snapshot + 时长/销假/预警字段) `approval_records` `checkins` `attachments`(对象存储 file_key) `messages`(待办+通知合一，type 含 approval_todo/abnormal) `alert_rules`(单行配置) `alert_records` `operation_logs`(只追加)
 
 ### 关键 API
 
 | 路由 | 方法 | 说明 |
 |------|------|------|
 | `/api/auth/login` `/logout` `/me` `/password` | POST/GET | 认证 |
-| `/api/users` `/api/users/[id]` `/api/users/[id]/reset-password` | GET/POST/PUT/DELETE | 账号管理 |
-| `/api/students/import` | POST(json {csv,mode}) | 导入预览 preview / 提交 commit |
-| `/api/students/template` `/api/leaves/export` | GET | CSV 模板/导出(BOM) |
-| `/api/classes` `/api/campuses` `/api/leave-types` `/api/flows` | CRUD | 基础资料/流程配置 |
+| `/api/users?staff=1&role=&departmentId=&keyword=` `/api/users/[id]` `/api/users/[id]/reset-password` | GET/POST/PUT/DELETE | 账号管理（roles[]多角色；学生随班级回填组织字段；调班留痕+待办交接，返回 handoffCount/abnormalCount） |
+| `/api/departments` `/api/departments/[id]` | GET/POST/PUT/DELETE | 系部（停用有有效专业需 confirm，409 needConfirm） |
+| `/api/majors` `/api/majors/[id]?previewReparent=` | GET/POST/PUT/DELETE | 专业（必归属系部；转系预览/级联+留痕） |
+| `/api/management-relations?type=teacher_classes\|head_teachers\|leader_departments` | GET/POST/DELETE | 三类管理授权关系 |
+| `/api/students/import` | POST(json {csv,mode}) | 导入预览 preview / 提交 commit；表头含系部名称/专业名称并校验「班级属于专业、专业属于系部」 |
+| `/api/students/template` `/api/leaves/export` | GET | CSV 模板/导出(BOM，含系部/专业/年级列) |
+| `/api/classes` `/api/campuses` `/api/leave-types` `/api/flows` | CRUD | 基础资料/流程配置（班级选专业自动带系部/年级；流节点角色支持 6 角色+assigneeId） |
 | `/api/leaves?scope=todo` | GET | 待办基于 messages 精确过滤 |
 | `/api/leaves` | POST | 学生提交（编号/时长/冲突/流程快照/待办） |
 | `/api/leaves/[id]` | GET/DELETE | 详情 / 学生撤回 |
@@ -110,8 +119,9 @@
 
 ### 演示数据
 
-- `POST /api/auth/seed` 幂等重建演示数据（校区围栏、请假类型、4 条审批流、班级、师/生账号、示例单据）。
-- 账号：管理员 `admin/admin123`；中队长 `T2024001/teacher123`；学生 `S2024001/student123` 等。
+- `POST /api/auth/seed` 幂等重建演示数据（会清空并重建含 departments/majors/user_roles/rel_*/management_changes 在内的全部业务表，**手工创建的基础数据会被清掉**）；含组织树、多角色、三类管理关系、含院领导节点的长天数三级流、示例单据。
+- 账号：管理员 `admin/admin123`；中队长 `T2024001`/`T2024002/teacher123`；大队长 `H2024001/staff123`；学工处 `A2024001/staff123`；分管院领导 `L2024001/staff123`；多角色示例（中队长+学工处）`T2024003/teacher123`；学生 `S2024001/student123` 等。
+- 长病假（折算>3天）走「中队长→学工处→分管院领导」三级；短假走班级负责人单级。
 
 ### 注意事项
 

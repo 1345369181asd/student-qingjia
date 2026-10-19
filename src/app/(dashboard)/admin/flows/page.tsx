@@ -14,10 +14,20 @@ interface LeaveType {
   code: string;
   name: string;
 }
+type NodeRole = "teacher" | "head_teacher" | "affair" | "college_leader" | "admin";
+
+const NODE_ROLE_OPTIONS: Array<{ value: NodeRole; label: string; hint: string }> = [
+  { value: "teacher", label: "中队长", hint: "按学生所在班级的负责中队长解析" },
+  { value: "head_teacher", label: "大队长", hint: "按 大队长-中队长 关系向上解析" },
+  { value: "affair", label: "学工处", hint: "全体学工处角色，任一处理" },
+  { value: "college_leader", label: "分管院领导（系主任）", hint: "按学生所属系部分管院领导解析" },
+  { value: "admin", label: "系统管理员", hint: "全体管理员，任一处理" },
+];
+
 interface FlowNode {
   order: number;
   name: string;
-  role: "teacher" | "admin";
+  role: NodeRole;
   assigneeId?: string | null;
 }
 interface Flow {
@@ -41,7 +51,7 @@ const emptyForm = {
   require_leave_school: "",
   priority: "0",
   is_active: true,
-  nodes: [] as Array<{ name: string; role: "teacher" | "admin"; assigneeId: string }>,
+  nodes: [] as Array<{ name: string; role: NodeRole; assigneeId: string }>,
 };
 
 export default function FlowsPage() {
@@ -76,11 +86,11 @@ export default function FlowsPage() {
   const addNode = () => {
     setForm((f) => ({
       ...f,
-      nodes: [...f.nodes, { name: "", role: "teacher" as const, assigneeId: "" }],
+      nodes: [...f.nodes, { name: "", role: "teacher" as NodeRole, assigneeId: "" }],
     }));
   };
 
-  const updateNode = (idx: number, patch: Partial<{ name: string; role: "teacher" | "admin"; assigneeId: string }>) => {
+  const updateNode = (idx: number, patch: Partial<{ name: string; role: NodeRole; assigneeId: string }>) => {
     setForm((f) => ({
       ...f,
       nodes: f.nodes.map((n, i) => (i === idx ? { ...n, ...patch } : n)),
@@ -121,9 +131,6 @@ export default function FlowsPage() {
     if (!form.name.trim()) return alert("请填写流程名称");
     if (form.nodes.length === 0) return alert("请至少配置一个审批节点");
     if (form.nodes.some((n) => !n.name.trim())) return alert("请填写所有节点名称");
-    if (form.nodes.some((n) => n.role === "teacher" && !n.assigneeId)) {
-      return alert("请为教师节点选择审批人");
-    }
     const payload = {
       name: form.name.trim(),
       leaveTypeCode: form.leave_type_code || null,
@@ -136,7 +143,8 @@ export default function FlowsPage() {
       nodes: form.nodes.map((n) => ({
         name: n.name.trim(),
         role: n.role,
-        assigneeId: n.role === "teacher" ? n.assigneeId : null,
+        // 可选：指定具体审批人；留空则按角色 + 管理关系自动解析
+        assigneeId: n.assigneeId || null,
       })),
     };
     const res = await fetch(editingId ? `/api/flows/${editingId}` : "/api/flows", {
@@ -227,9 +235,10 @@ export default function FlowsPage() {
                         {i + 1}. {n.name}
                       </p>
                       <p className="text-xs text-slate-500">
-                        {n.role === "admin"
-                          ? "管理员"
-                          : teachers.find((t) => t.id === n.assigneeId)?.name ?? "未指定教师"}
+                        {NODE_ROLE_OPTIONS.find((o) => o.value === n.role)?.label ?? n.role}
+                        {n.assigneeId
+                          ? `（指定：${teachers.find((t) => t.id === n.assigneeId)?.name ?? "人员"}）`
+                          : ""}
                       </p>
                     </div>
                     {i < arr.length - 1 && <ArrowRight className="w-4 h-4 text-slate-300 shrink-0" />}
@@ -330,47 +339,53 @@ export default function FlowsPage() {
                   </button>
                 </div>
                 <div className="space-y-2">
-                  {form.nodes.map((n, idx) => (
-                    <div key={idx} className="flex items-center gap-2 bg-slate-50 rounded-lg p-2">
-                      <span className="text-xs font-bold text-slate-400 w-5 shrink-0">{idx + 1}</span>
-                      <input
-                        value={n.name}
-                        onChange={(e) => updateNode(idx, { name: e.target.value })}
-                        placeholder="节点名称，如：中队长审批"
-                        className="flex-1 min-w-0 border border-slate-300 rounded px-2 py-1.5 text-sm"
-                      />
-                      <select
-                        value={n.role}
-                        onChange={(e) =>
-                          updateNode(idx, {
-                            role: e.target.value as "teacher" | "admin",
-                            assigneeId: e.target.value === "admin" ? "" : n.assigneeId,
-                          })
-                        }
-                        className="border border-slate-300 rounded px-2 py-1.5 text-sm"
-                      >
-                        <option value="teacher">指定教师</option>
-                        <option value="admin">管理员</option>
-                      </select>
-                      {n.role === "teacher" && (
+                  {form.nodes.map((n, idx) => {
+                    const roleOpt = NODE_ROLE_OPTIONS.find((o) => o.value === n.role);
+                    return (
+                    <div key={idx} className="bg-slate-50 rounded-lg p-2.5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-400 w-5 shrink-0">{idx + 1}</span>
+                        <input
+                          value={n.name}
+                          onChange={(e) => updateNode(idx, { name: e.target.value })}
+                          placeholder="节点名称，如：中队长审批"
+                          className="flex-1 min-w-0 border border-slate-300 rounded px-2 py-1.5 text-sm"
+                        />
                         <select
-                          value={n.assigneeId}
-                          onChange={(e) => updateNode(idx, { assigneeId: e.target.value })}
-                          className="border border-slate-300 rounded px-2 py-1.5 text-sm max-w-[120px]"
+                          value={n.role}
+                          onChange={(e) => updateNode(idx, { role: e.target.value as NodeRole })}
+                          className="border border-slate-300 rounded px-2 py-1.5 text-sm"
                         >
-                          <option value="">选择</option>
-                          {teachers.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}
+                          {NODE_ROLE_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
                             </option>
                           ))}
                         </select>
-                      )}
-                      <button onClick={() => removeNode(idx)} className="p-1 text-rose-400 hover:text-rose-600 shrink-0">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                        <button onClick={() => removeNode(idx)} className="p-1 text-rose-400 hover:text-rose-600 shrink-0">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2 pl-7">
+                        <span className="text-[11px] text-slate-400 shrink-0">
+                          {roleOpt?.hint}
+                        </span>
+                        <select
+                          value={n.assigneeId}
+                          onChange={(e) => updateNode(idx, { assigneeId: e.target.value })}
+                          className="ml-auto border border-slate-300 rounded px-2 py-1 text-xs max-w-[160px]"
+                        >
+                          <option value="">按角色自动解析</option>
+                          {teachers.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              指定：{t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   {form.nodes.length === 0 && (
                     <p className="text-xs text-slate-400 text-center py-3">尚未添加审批节点</p>
                   )}

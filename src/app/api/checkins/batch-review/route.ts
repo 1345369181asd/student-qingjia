@@ -5,13 +5,19 @@ import { requireAuth } from "@/lib/auth";
 import { closeTodos, createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
 import { releaseActiveLeave } from "@/lib/business";
+import { resolveScope } from "@/lib/scope";
 
 // 批量销假确认（逐条校验管理范围，驳回不开放批量，避免误操作）
 export async function POST(request: Request) {
   const user = await requireAuth(request);
   if (user instanceof Response) return user;
-  if (user.role !== "teacher") {
-    return NextResponse.json({ error: "仅中队长可批量确认销假" }, { status: 403 });
+  const canReview =
+    user.roles.includes("teacher") ||
+    user.roles.includes("head_teacher") ||
+    user.roles.includes("admin") ||
+    user.roles.includes("affair");
+  if (!canReview) {
+    return NextResponse.json({ error: "无销假确认权限" }, { status: 403 });
   }
   const body = (await request.json()) as { ids?: string[]; comment?: string };
   if (!Array.isArray(body.ids) || body.ids.length === 0) {
@@ -22,13 +28,9 @@ export async function POST(request: Request) {
   const batchId = randomUUID();
   const results: Array<{ id: string; ok: boolean; reason?: string }> = [];
 
-  // 管理范围班级
-  const { data: ledClasses } = await db
-    .from("classes")
-    .select("id")
-    .eq("leader_id", user.id)
-    .eq("is_active", true);
-  const classIds = new Set((ledClasses ?? []).map((c) => c.id as string));
+  // 管理范围：管理员/学工处全校；中队长所带班级；大队长名下中队长覆盖班级
+  const scope = await resolveScope(db, user);
+  const classIds = scope.all ? null : new Set(scope.classIds);
 
   for (const id of body.ids) {
     const { data: leave } = await db.from("leave_requests").select("*").eq("id", id).maybeSingle();
@@ -53,7 +55,7 @@ export async function POST(request: Request) {
       .eq("id", lv.student_id)
       .maybeSingle();
     const classId = (student as { class_id: string | null } | null)?.class_id;
-    if (!classId || !classIds.has(classId)) {
+    if (!classId || (classIds !== null && !classIds.has(classId))) {
       results.push({ id, ok: false, reason: "不在管理范围" });
       continue;
     }

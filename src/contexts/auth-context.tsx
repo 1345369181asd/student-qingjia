@@ -4,19 +4,37 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 import { useRouter } from "next/navigation";
 import { TOKEN_KEY, getToken, setToken, clearToken } from "@/components/shared";
 
-export type UserRole = "student" | "teacher" | "admin";
+export type UserRole =
+  | "student"
+  | "teacher"
+  | "head_teacher"
+  | "affair"
+  | "college_leader"
+  | "admin";
+
+export const ALL_ROLE_LABELS: Record<UserRole, string> = {
+  student: "学生",
+  teacher: "中队长",
+  head_teacher: "大队长",
+  affair: "学工处",
+  college_leader: "分管院领导",
+  admin: "管理员",
+};
 
 export interface AuthUser {
   id: string;
   username: string;
   name: string;
   role: UserRole;
+  roles?: UserRole[];
   classId: string | null;
   campusId?: string | null;
   studentNo?: string | null;
   grade?: string | null;
   major?: string | null;
   department?: string | null;
+  majorId?: string | null;
+  departmentId?: string | null;
   studentStatus?: string;
   mustChangePassword?: boolean;
 }

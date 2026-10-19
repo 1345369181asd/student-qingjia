@@ -11,6 +11,9 @@ interface ExportRow {
   student_no_snapshot: string | null;
   student_name_snapshot: string | null;
   class_name_snapshot: string | null;
+  department_snapshot?: string | null;
+  major_name_snapshot?: string | null;
+  grade_snapshot?: string | null;
   leave_type: string;
   start_time: string;
   end_time: string;
@@ -40,7 +43,7 @@ export async function GET(request: Request) {
   let q = db
     .from("leave_requests")
     .select(
-      "request_no, student_id, student_no_snapshot, student_name_snapshot, class_name_snapshot, leave_type, start_time, end_time, duration_hours, duration_minutes, duration_days, leave_school, status, reason, checkin_status, checkin_at, is_overdue, created_at"
+      "request_no, student_id, student_no_snapshot, student_name_snapshot, department_snapshot, major_name_snapshot, grade_snapshot, class_name_snapshot, leave_type, start_time, end_time, duration_hours, duration_minutes, duration_days, leave_school, status, reason, checkin_status, checkin_at, is_overdue, created_at"
     )
     .order("created_at", { ascending: false });
   if (status) q = q.eq("status", status);
@@ -81,11 +84,14 @@ export async function GET(request: Request) {
   };
 
   const csv = toCsv(
-    ["请假编号", "学号", "姓名", "班级", "请假类型", "开始时间", "结束时间", "实际时长(小时)", "折算天数(0.5天/半日)", "是否离校", "状态", "事由", "销假状态", "销假时间", "是否逾期", "提交时间"],
+    ["请假编号", "学号", "姓名", "系部", "专业", "年级", "班级", "请假类型", "开始时间", "结束时间", "实际时长(小时)", "折算天数(0.5天/半日)", "是否离校", "状态", "事由", "销假状态", "销假时间", "是否逾期", "提交时间"],
     rows.map((r) => [
       r.request_no,
       r.student_no_snapshot ?? "",
       r.student_name_snapshot ?? "",
+      r.department_snapshot ?? "",
+      r.major_name_snapshot ?? "",
+      r.grade_snapshot ?? "",
       r.class_name_snapshot ?? "",
       LEAVE_TYPE_LABEL[r.leave_type as keyof typeof LEAVE_TYPE_LABEL] ?? r.leave_type,
       formatDt(r.start_time),

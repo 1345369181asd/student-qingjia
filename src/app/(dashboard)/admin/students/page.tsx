@@ -7,15 +7,23 @@ import { Loader2, Plus, Upload, Download, Pencil, Trash2, KeyRound, X } from "lu
 interface ClassItem {
   id: string;
   name: string;
+  grade?: string | null;
+  major_name?: string | null;
+  department_name?: string | null;
 }
 interface Student {
   id: string;
   username: string;
   name: string;
   class_id: string | null;
+  grade?: string | null;
+  major?: string | null;
+  department?: string | null;
   is_active: boolean;
   must_change_password: boolean;
   classes?: { name: string } | null;
+  majors?: { name: string } | null;
+  departments?: { name: string } | null;
 }
 interface PreviewRow {
   rowNo: number;
@@ -291,7 +299,8 @@ export default function AdminStudents() {
                 <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
                   <th className="px-3 py-2 font-medium">学号</th>
                   <th className="px-3 py-2 font-medium">姓名</th>
-                  <th className="px-3 py-2 font-medium">班级</th>
+                  <th className="px-3 py-2 font-medium">系部 / 专业</th>
+                  <th className="px-3 py-2 font-medium">年级 / 班级</th>
                   <th className="px-3 py-2 font-medium">状态</th>
                   <th className="px-3 py-2 font-medium text-right">操作</th>
                 </tr>
@@ -301,7 +310,18 @@ export default function AdminStudents() {
                   <tr key={s.id} className="hover:bg-slate-50">
                     <td className="px-3 py-2.5 font-mono text-xs">{s.username}</td>
                     <td className="px-3 py-2.5 font-medium text-slate-800">{s.name}</td>
-                    <td className="px-3 py-2.5 text-slate-600">{s.classes?.name ?? "-"}</td>
+                    <td className="px-3 py-2.5 text-slate-600">
+                      <div className="text-xs leading-5">
+                        <div>{s.departments?.name ?? s.department ?? "-"}</div>
+                        <div className="text-slate-400">{s.majors?.name ?? s.major ?? "-"}</div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-600">
+                      <div className="text-xs leading-5">
+                        <div className="text-slate-400">{s.grade ?? "-"}</div>
+                        <div>{s.classes?.name ?? "-"}</div>
+                      </div>
+                    </td>
                     <td className="px-3 py-2.5">
                       {s.is_active ? (
                         <span className="text-xs text-emerald-600">正常</span>
@@ -342,7 +362,7 @@ export default function AdminStudents() {
               </tbody>
             </table>
             {students.length === 0 && (
-              <p className="py-10 text-center text-sm text-slate-400">暂无学生数据</p>
+              <p className="py-10 text-center text-sm text-slate-400 col-span-6">暂无学生数据</p>
             )}
           </div>
         )}
@@ -382,6 +402,7 @@ export default function AdminStudents() {
                   {classes.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
+                      {c.department_name ? `（${c.department_name}·${c.major_name ?? ""}）` : ""}
                     </option>
                   ))}
                 </select>

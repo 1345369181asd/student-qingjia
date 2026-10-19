@@ -48,6 +48,9 @@ interface LeaveRow {
   student_name_snapshot: string | null;
   student_no_snapshot: string | null;
   class_name_snapshot: string | null;
+  department_snapshot?: string | null;
+  major_name_snapshot?: string | null;
+  grade_snapshot?: string | null;
   files?: FileRow[];
   approvals?: ApprovalRow[];
 }
@@ -288,6 +291,11 @@ export default function AdminLeavesPage() {
                         {lv.is_overdue && <span className="ml-1 text-xs text-rose-500">逾期</span>}
                       </p>
                       <p className="text-xs text-slate-400">{lv.student_no_snapshot} · {lv.class_name_snapshot}</p>
+                      {(lv.department_snapshot || lv.major_name_snapshot) && (
+                        <p className="text-xs text-slate-400">
+                          {[lv.department_snapshot, lv.major_name_snapshot, lv.grade_snapshot].filter(Boolean).join(" / ")}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <LeaveTypeBadge type={lv.leave_type} />

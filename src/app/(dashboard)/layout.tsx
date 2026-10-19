@@ -23,6 +23,8 @@ import {
   History,
   MapPin,
   KeyRound,
+  Network,
+  GitBranch,
 } from "lucide-react";
 
 interface MessageItem {
@@ -48,7 +50,9 @@ const navItems: Record<string, Array<{ href: string; label: string; icon: React.
   admin: [
     { href: "/admin", label: "工作台", icon: LayoutDashboard },
     { href: "/admin/students", label: "学生管理", icon: Users },
-    { href: "/admin/teachers", label: "中队长管理", icon: Users },
+    { href: "/admin/teachers", label: "账号与角色", icon: Users },
+    { href: "/admin/org", label: "组织架构", icon: Network },
+    { href: "/admin/relations", label: "管理关系", icon: GitBranch },
     { href: "/admin/classes", label: "班级管理", icon: School },
     { href: "/admin/leaves", label: "全部请假", icon: FileText },
     { href: "/admin/stats", label: "统计报表", icon: BarChart3 },
@@ -62,6 +66,9 @@ const navItems: Record<string, Array<{ href: string; label: string; icon: React.
 const roleLabel: Record<string, string> = {
   student: "学生",
   teacher: "中队长",
+  head_teacher: "大队长",
+  affair: "学工处",
+  college_leader: "分管院领导",
   admin: "管理员",
 };
 
@@ -125,7 +132,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
   }
 
-  const items = navItems[user.role] ?? [];
+  // 多角色：非学生角色统一进入教师工作台（ROLE_HOME），管理员额外看管理菜单，菜单按 roles 合并去重
+  const roles: string[] = user.roles && user.roles.length > 0 ? user.roles : [user.role];
+  const navRoleKeys = roles.some((r) => r === "admin")
+    ? ["admin"]
+    : roles.filter((r) => r !== "student").length > 0
+      ? ["teacher"]
+      : ["student"];
+  const items = Array.from(
+    new Map(
+      navRoleKeys.flatMap((k) => navItems[k] ?? []).map((it) => [it.href, it])
+    ).values()
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
@@ -159,10 +177,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {items.map((item) => {
-            const active =
-              item.href === `/${user.role}`
-                ? pathname === item.href
-                : pathname.startsWith(item.href);
+            const homeHrefs = ["/student", "/teacher", "/admin"];
+            const active = homeHrefs.includes(item.href)
+              ? pathname === item.href
+              : pathname.startsWith(item.href);
             const Icon = item.icon;
             return (
               <Link
@@ -280,7 +298,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
             <div className="hidden sm:block">
               <p className="text-sm font-medium text-slate-800 leading-tight">{user.name}</p>
-              <p className="text-xs text-slate-400 leading-tight">{roleLabel[user.role]}</p>
+              <p className="text-xs text-slate-400 leading-tight">
+                {roles.map((r) => roleLabel[r] ?? r).join(" / ")}
+              </p>
             </div>
           </div>
         </header>

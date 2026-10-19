@@ -8,10 +8,10 @@ import {
   calcDurationDays,
   genRequestNo,
   matchFlow,
-  resolveApproverId,
   findActiveLeave,
   acquireActiveLeave,
 } from "@/lib/business";
+import { resolveScope, resolveApproverIds } from "@/lib/scope";
 import { createMessage } from "@/lib/notify";
 import { writeOperationLog } from "@/lib/logger";
 
@@ -36,36 +36,28 @@ export async function GET(request: Request) {
 
   const db = await getClient();
 
-  // 中队长数据范围：其作为 leader_id 的班级
-  let scopedClassIds: string[] | null = null;
-  if (user.role === "teacher") {
-    const { data: ledClasses } = await db
-      .from("classes")
-      .select("id")
-      .eq("leader_id", user.id)
-      .eq("is_active", true);
-    scopedClassIds = (ledClasses ?? []).map((c) => c.id as string);
-  }
+  // 数据范围：学生=本人；管理角色按 resolveScope（班级/系部并集；admin/affair 全校）
+  const isStudentOnly = user.roles.length === 1 && user.roles[0] === "student";
+  const scopeInfo = await resolveScope(db, user);
 
-  // 中队长范围：先查出范围内学生 id
+  // 管理范围对应的学生 id 集合（按班级或系部）
   let scopedStudentIds: string[] | null = null;
-  if (user.role === "teacher") {
-    if (scopedClassIds && scopedClassIds.length > 0) {
-      const { data: scopedStudents } = await db
-        .from("users")
-        .select("id")
-        .in("class_id", scopedClassIds)
-        .eq("role", "student");
-      scopedStudentIds = (scopedStudents ?? []).map((s) => s.id as string);
-    } else {
-      scopedStudentIds = [];
-    }
+  if (!isStudentOnly && !scopeInfo.all) {
+    const studentQ = db.from("users").select("id").eq("role", "student");
+    const ors: string[] = [];
+    if (scopeInfo.classIds.length > 0) ors.push(`class_id.in.(${scopeInfo.classIds.join(",")})`);
+    if (scopeInfo.departmentIds.length > 0)
+      ors.push(`department_id.in.(${scopeInfo.departmentIds.join(",")})`);
+    const { data: scopedStudents } =
+      ors.length > 0 ? await studentQ.or(ors.join(",")) : { data: [] };
+    scopedStudentIds = (scopedStudents ?? []).map((s) => s.id as string);
   }
 
   let query = db.from("leave_requests").select("*");
 
-  if (user.role === "student") query = query.eq("student_id", user.id);
-  if (user.role === "teacher") {
+  if (isStudentOnly) {
+    query = query.eq("student_id", user.id);
+  } else if (!scopeInfo.all) {
     query =
       scopedStudentIds && scopedStudentIds.length > 0
         ? query.in("student_id", scopedStudentIds)
@@ -325,10 +317,12 @@ export async function POST(request: Request) {
     );
   }
 
-  // 学生与组织快照
+  // 学生与组织快照（系部/专业/年级/班级，调班不影响历史单据）
   const { data: student } = await db
     .from("users")
-    .select("id,name,username,student_no,class_id,department,classes:class_id(name)")
+    .select(
+      "id,name,username,student_no,class_id,grade,major_id,department_id,department,major,classes:class_id(name),majors:major_id(id,name),departments:department_id(id,name)"
+    )
     .eq("id", user.id)
     .maybeSingle();
   const s = student as {
@@ -337,21 +331,30 @@ export async function POST(request: Request) {
     username: string;
     student_no: string | null;
     class_id: string | null;
+    grade: string | null;
+    major_id: string | null;
+    department_id: string | null;
     department: string | null;
+    major: string | null;
     classes?: { name: string } | null;
+    majors?: { id: string; name: string } | null;
+    departments?: { id: string; name: string } | null;
   } | null;
 
   const typedFlow = flow as unknown as {
     id: string;
     version: number;
-    nodes: Array<{ order: number; name: string; role: "teacher" | "admin"; assigneeId?: string | null }>;
+    nodes: Array<{ order: number; name: string; role: string; assigneeId?: string | null }>;
   };
   const firstNode = typedFlow.nodes[0];
-  const approverId = await resolveApproverId(
-    firstNode,
-    { id: user.id, classId: s?.class_id ?? null },
-    db
-  );
+  // 按管理关系解析首节点合格审批人（任一合格人员处理即可）
+  const approverIds = firstNode.assigneeId
+    ? [firstNode.assigneeId]
+    : await resolveApproverIds(db, firstNode.role, {
+        class_id: s?.class_id ?? null,
+        department_id: s?.department_id ?? null,
+      });
+  const approverId = approverIds[0] ?? null;
 
   // 唯一编号重试（极少冲突）
   let requestNo = genRequestNo();
@@ -373,7 +376,10 @@ export async function POST(request: Request) {
       student_no_snapshot: s?.student_no ?? s?.username ?? user.username,
       student_name_snapshot: s?.name ?? user.name,
       class_name_snapshot: s?.classes?.name ?? null,
-      department_snapshot: s?.department ?? null,
+      department_snapshot: s?.departments?.name ?? s?.department ?? null,
+      major_id_snapshot: s?.major_id ?? null,
+      major_name_snapshot: s?.majors?.name ?? s?.major ?? null,
+      grade_snapshot: s?.grade ?? null,
       leave_type: body.leaveType,
       leave_type_name: (typeRow as { name: string }).name,
       reason: body.reason.trim(),
@@ -430,25 +436,28 @@ export async function POST(request: Request) {
     request,
   });
 
-  // 首个节点审批人待办；找不到审批人 -> 发给管理员作为异常待办，绝不自动批准
-  const todoUserId = approverId ?? null;
-  if (todoUserId) {
-    await createMessage({
-      userId: todoUserId,
-      type: "approval_todo",
-      title: `新的请假申请待审批：${s?.name ?? user.name}（${(typeRow as { name: string }).name}，计 ${durationDays} 天）`,
-      content: body.reason.trim(),
-      leaveRequestId: leaveId,
-      isTodo: true,
-    });
-  } else {
-    const { data: admin } = await db.from("users").select("id").eq("role", "admin").limit(1).maybeSingle();
-    if (admin) {
+  // 首个节点审批人待办：合格审批人都收到（任一处理即关闭其余，不做会签）
+  const approverIdList = approverIds;
+  if (approverIdList.length > 0) {
+    for (const uid of approverIdList) {
       await createMessage({
-        userId: (admin as { id: string }).id,
+        userId: uid,
+        type: "approval_todo",
+        title: `新的请假申请待审批：${s?.name ?? user.name}（${(typeRow as { name: string }).name}，计 ${durationDays} 天）`,
+        content: body.reason.trim(),
+        leaveRequestId: leaveId,
+        isTodo: true,
+      });
+    }
+  } else {
+    // 找不到审批人 -> 发给全部管理员作为异常待办，绝不自动批准/跳过
+    const { data: admins } = await db.from("user_roles").select("user_id").eq("role", "admin");
+    for (const a of admins ?? []) {
+      await createMessage({
+        userId: a.user_id as string,
         type: "abnormal",
         title: `异常待办：申请 ${requestNo} 未找到「${firstNode.name}」审批人`,
-        content: "请检查班级中队长配置或流程节点审批人配置",
+        content: "请检查该学生班级的中队长配置、各级管理关系或流程节点审批人配置",
         leaveRequestId: leaveId,
         isTodo: true,
       });
